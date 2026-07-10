@@ -1,32 +1,55 @@
-# FleetView — il codice della bottega 📡
+# FleetView — *il codice della bottega* 📡
 
-Tour de contrôle de la flotte de repos : états en un coup d'œil (à débloquer / en session /
-en attente / calme), boîte à idées priorisée (« codex »), lancement de sessions Claude avec
-cadrage préalable, gestion du cycle de vie (actif / veille / archivé) — le tout sans ouvrir GitHub.
+**Le poste de pilotage de ma flotte de repos.** Une seule page — sur ordinateur comme sur
+téléphone — pour voir où en est chaque projet et lancer du travail dessus, sans jamais ouvrir
+GitHub.
 
-Site 100 % statique, zéro backend, zéro dépendance : le navigateur parle directement à l'API
-GitHub et s'appuie sur le pipeline existant de la flotte (issues `claude` → sessions Actions → PRs).
+- **États en un coup d'œil** : à débloquer · en session · en attente · calme — et surtout, un
+  bandeau **« À traiter »** qui isole ce qui réclame ta main.
+- **Codex des idées** : une boîte à idées priorisée (P1/P2/P3), qui ne coûte rien tant qu'elle dort.
+- **Lancer une demande** : tu décris quoi, Claude cadre puis implémente — le dialogue reste
+  dans l'interface (les sessions Actions « parlent » par commentaires d'issue que FleetView relit).
+- **Gestes directs** : merger une PR, relancer un run, mettre un projet en veille/archivé —
+  appel API instantané, zéro session.
+- **Cycle de vie** : *actif* / *veille* (dev en pause mais pannes surveillées) / *archivé*.
+- **6 thèmes**, PWA installable sur mobile.
 
-## Lancer en local
+Site **100 % statique** (aucun build, aucune dépendance JS) : le navigateur parle directement
+à l'API GitHub et s'appuie sur le pipeline existant de la flotte (issue `claude` → session
+Actions → PR).
+
+## Démarrer
+
 ```bash
-npx serve -l 4000 .
-# puis http://localhost:4000
+npx serve -l 4010 .        # puis http://localhost:4010
 ```
-Vérification : `node scripts/verify.mjs`
 
-## Configuration (premier lancement)
-1. Créer un token GitHub **fine-grained** sur https://github.com/settings/personal-access-tokens
-   — accès : tous les repos du compte ; permissions : **Contents** (read/write), **Issues**
-   (read/write), **Pull requests** (read/write), **Actions** (read/write), **Metadata** (read),
-   **Administration** (read/write, uniquement si tu veux créer des projets depuis l'interface).
-2. Le coller dans l'écran de configuration. Il reste dans le `localStorage` du navigateur,
-   il ne transite jamais ailleurs que vers `api.github.com`.
-3. Ou cliquer **Mode démo** pour explorer l'interface avec des données factices.
+Au premier lancement : colle un **token GitHub fine-grained** (il reste dans ton navigateur),
+ou clique **« explorer en mode démo »** pour découvrir l'interface sans token.
 
-## Sur téléphone
-Ouvrir l'URL GitHub Pages puis « Ajouter à l'écran d'accueil » : l'app s'ouvre en plein écran
-(manifest PWA). Thème au choix : De Vinci (défaut), Clair, Sombre, Océan, Forêt, Montagnes.
+Les permissions exactes du token, tous les concepts et l'architecture sont dans le
+**[Guide complet →](docs/GUIDE.md)**.
 
-## Coût
-0 € : GitHub Pages + API GitHub (limite 5 000 req/h, l'app en consomme ~25 par relevé).
-Les sessions lancées consomment le budget API Claude existant de la flotte.
+## Repères
+
+| | |
+|---|---|
+| **Lancer** | `npx serve -l 4010 .` |
+| **Vérifier** | `node scripts/verify.mjs` |
+| **Déployer** | GitHub Pages (`pages.yml`, sur `main`) — nécessite le repo public |
+| **Coût** | 0 € (Pages + API GitHub, ~25 requêtes/relevé sur 5 000/h) |
+| **Feuille de route** | [BACKLOG.md](BACKLOG.md) |
+
+## Structure
+
+```
+index.html            Coquille de l'interface
+styles.css            Styles + 6 thèmes (variables CSS)
+app.js                Tout le comportement (API GitHub, rendus, actions)
+docs/GUIDE.md         Le manuel complet
+scripts/verify.mjs    Vérification (le site démarre et répond)
+.github/workflows/    Stubs du kit de flotte (claude, map, pages)
+```
+
+> Convention : 1 item de `BACKLOG.md` = 1 session = 1 PR ; commits en français ;
+> branche + PR (jamais de push direct sur `main`). Voir [CLAUDE.md](CLAUDE.md).
