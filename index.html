@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>FleetView — il codice della bottega</title>
+  <meta name="description" content="Tour de contrôle de la flotte : états des repos, codex des idées, sessions Claude.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#E9DFC7">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-tab="flotte">
+
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="var(--accent)" stroke-width="1.3">
+        <rect x="3.5" y="3.5" width="17" height="17"/>
+        <circle cx="12" cy="12" r="8.5"/>
+        <line x1="12" y1="3.5" x2="12" y2="20.5" opacity=".55"/>
+        <line x1="3.5" y1="12" x2="20.5" y2="12" opacity=".55"/>
+        <circle cx="12" cy="12" r="1" fill="var(--accent)" stroke="none"/>
+      </svg>
+      <span class="brand-name">FleetView</span>
+      <span class="brand-sub">il codice della bottega</span>
+    </div>
+    <div class="sum" id="summary" aria-label="Synthèse de la flotte"></div>
+    <div class="topbar-actions">
+      <span class="refresh-note num" id="sync-note"></span>
+      <select id="theme-select" class="theme-select" title="Thème" aria-label="Thème">
+        <option value="devinci">De Vinci</option>
+        <option value="clair">Clair</option>
+        <option value="sombre">Sombre</option>
+        <option value="ocean">Océan</option>
+        <option value="foret">Forêt</option>
+        <option value="montagnes">Montagnes</option>
+      </select>
+      <button class="btn btn-icon" id="btn-refresh" title="Rafraîchir maintenant">⟳</button>
+      <button class="btn btn-secondary-desktop" id="btn-newproject" hidden>⚒ Nouveau projet</button>
+      <button class="btn btn-primary" id="btn-new" hidden>＋ Demande</button>
+    </div>
+  </div>
+</header>
+
+<div class="banner" id="banner" hidden></div>
+
+<!-- Écran de configuration (premier lancement / token invalide) -->
+<section class="config" id="view-config" hidden>
+  <div class="config-card">
+    <h2><span class="orn">❧</span> Relier l'atelier à GitHub</h2>
+    <p>FleetView lit et pilote ta flotte via l'API GitHub, directement depuis ce navigateur.
+       Le token reste en <code>localStorage</code> — il ne transite jamais ailleurs que vers
+       <code>api.github.com</code>.</p>
+    <ol>
+      <li>Crée un token <b>fine-grained</b> sur
+        <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com/settings/personal-access-tokens</a></li>
+      <li>Accès : <b>tous les repos</b> du compte Thibaud888</li>
+      <li>Permissions : <b>Contents</b>, <b>Issues</b>, <b>Pull requests</b>, <b>Actions</b>
+        (read &amp; write) + <b>Metadata</b> (read) ; <b>Administration</b> seulement pour créer des repos d'ici.</li>
+    </ol>
+    <div class="config-form">
+      <input id="token-input" type="password" placeholder="github_pat_…" autocomplete="off" aria-label="Token GitHub">
+      <button class="btn btn-primary" id="token-save">Relier</button>
+    </div>
+    <p class="marginalia">…ou <a href="#" id="demo-link">explorer en mode démo</a> (données factices, aucune action réelle).</p>
+  </div>
+</section>
+
+<div class="layout" id="view-app" hidden>
+  <section class="col-main" id="zone-flotte">
+    <div id="view-fleet">
+      <div class="attn" id="attn" hidden>
+        <div class="attn-head"><h2 class="eyebrow" id="attn-title"><span class="orn">❧</span>À traiter</h2></div>
+        <div id="attn-rows"></div>
+      </div>
+      <div class="fleet-head">
+        <h2 class="eyebrow"><span class="orn">❧</span>L'atelier</h2>
+        <span class="marginalia" style="font-size:12.5px">clique un projet pour n'ouvrir que lui</span>
+      </div>
+      <div class="filters" id="filters" role="group" aria-label="Filtrer les projets"></div>
+      <div class="grid" id="grid"><p class="marginalia" id="loading-note">Relevé de la flotte en cours…</p></div>
+      <details class="drawer" id="drawer" hidden>
+        <summary>Archivés · <span id="arch-count" class="num"></span></summary>
+        <div id="arch-rows"></div>
+      </details>
+    </div>
+    <div id="view-detail" hidden></div>
+  </section>
+
+  <aside class="col-side">
+    <section class="panel" id="panel-idees">
+      <div class="panel-head">
+        <h2 class="eyebrow"><span class="orn">❧</span>Codex des idées · <span id="ideas-count" class="num"></span></h2>
+        <span class="marginalia" style="font-size:12px">par priorité</span>
+      </div>
+      <div id="ideas"></div>
+      <div class="quickadd">
+        <select id="quick-repo" class="theme-select" aria-label="Projet de l'idée" title="Projet de l'idée"></select>
+        <input id="quick-input" type="text" placeholder="Noter une idée en vrac…" aria-label="Nouvelle idée">
+        <button class="btn" id="quick-add">＋</button>
+      </div>
+    </section>
+    <section class="panel" id="panel-activite">
+      <div class="panel-head"><h2 class="eyebrow"><span class="orn">❧</span>Chroniques</h2></div>
+      <div id="feed"></div>
+    </section>
+  </aside>
+</div>
+
+<nav class="bottombar" aria-label="Sections" id="bottombar" hidden>
+  <button class="bb-btn" data-tab="flotte" aria-pressed="true">Atelier</button>
+  <button class="bb-btn" data-tab="idees" aria-pressed="false">Codex <span class="n num" id="tab-idees-n"></span></button>
+  <button class="bb-plus" id="bb-new" aria-label="Nouvelle demande">＋</button>
+  <button class="bb-btn" data-tab="activite" aria-pressed="false">Chroniques</button>
+</nav>
+
+<dialog id="modal">
+  <form method="dialog" id="form-new">
+    <div class="modal-head">
+      <h2 id="modal-title">Nouvelle demande</h2>
+      <button type="button" class="btn btn-icon" id="modal-close" aria-label="Fermer">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="f-repo">Projet</label>
+        <select id="f-repo"></select>
+        <span class="aside-link"><a href="#" id="link-newproject">⚒ ou créer un nouveau projet…</a></span>
+      </div>
+      <div class="field">
+        <label for="f-title">Titre</label>
+        <input id="f-title" type="text" placeholder="Ex. : corriger l'affichage mobile du quiz" required>
+      </div>
+      <div class="field">
+        <label for="f-desc">Détails <small>— tout ce que tu as en tête, même en vrac</small></label>
+        <textarea id="f-desc" placeholder="Le cadrage remettra tout au propre de toute façon."></textarea>
+      </div>
+      <div class="field">
+        <label>Parcours</label>
+        <div class="radio-row">
+          <label class="radio-card"><input type="radio" name="f-when" value="cadrage" checked>
+            <span><b>🪶 Cadrer puis lancer</b><small>Claude reformule, pose ses questions ici, tu valides, il implémente — recommandé</small></span></label>
+          <label class="radio-card"><input type="radio" name="f-when" value="direct">
+            <span><b>⚡ Lancer direct</b><small>l'issue part telle quelle — pour les demandes déjà limpides</small></span></label>
+          <label class="radio-card" id="opt-box"><input type="radio" name="f-when" value="box">
+            <span><b>💡 Codex</b><small>rangée dans la boîte, lançable plus tard d'un clic</small></span></label>
+        </div>
+      </div>
+      <div class="field prio-row" id="f-prio-row">
+        <label class="radio-card"><input type="radio" name="f-prio" value="P1"><span><b>P1</b><small>dès que possible</small></span></label>
+        <label class="radio-card"><input type="radio" name="f-prio" value="P2" checked><span><b>P2</b><small>quand j'ai envie</small></span></label>
+        <label class="radio-card"><input type="radio" name="f-prio" value="P3"><span><b>P3</b><small>un jour peut-être</small></span></label>
+      </div>
+      <div class="field" id="f-model-row">
+        <label>Modèle d'implémentation</label>
+        <div class="radio-row">
+          <label class="radio-card"><input type="radio" name="f-model" value="sonnet" checked>
+            <span><b>Sonnet</b><small>code courant — label <code>claude</code></small></span></label>
+          <label class="radio-card"><input type="radio" name="f-model" value="haiku">
+            <span><b>Haiku</b><small>tâche mécanique — <code>claude:haiku</code></small></span></label>
+          <label class="radio-card"><input type="radio" name="f-model" value="opus">
+            <span><b>Opus</b><small>conception, gros chantier — <code>claude:opus</code></small></span></label>
+          <label class="radio-card"><input type="radio" name="f-model" value="fable">
+            <span><b>Fable</b><small>le plus capable — <code>claude:fable</code> · possiblement retiré sous peu</small></span></label>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="poc-note" id="modal-note"></span>
+      <button type="submit" class="btn btn-primary" id="f-submit">Cadrer avec Claude</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="modal-projet">
+  <form method="dialog" id="form-projet">
+    <div class="modal-head">
+      <h2>Nouveau projet</h2>
+      <button type="button" class="btn btn-icon" id="modal-projet-close" aria-label="Fermer">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="p-name">Nom du repo</label>
+        <input id="p-name" type="text" placeholder="mon-nouveau-projet" pattern="[a-zA-Z0-9._-]+" required>
+      </div>
+      <div class="field">
+        <label for="p-type">Type</label>
+        <select id="p-type">
+          <option value="static">static — page GitHub Pages</option>
+          <option value="service-node">service-node — app Node/Next</option>
+          <option value="service-python">service-python — app Python</option>
+          <option value="cron-node">cron-node — automatisation Node</option>
+          <option value="cron-python">cron-python — automatisation Python</option>
+          <option value="contenu">contenu — notes, docs</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Visibilité</label>
+        <div class="radio-row">
+          <label class="radio-card"><input type="radio" name="p-vis" value="private" checked><span><b>Privé</b></span></label>
+          <label class="radio-card"><input type="radio" name="p-vis" value="public"><span><b>Public</b><small>requis pour GitHub Pages</small></span></label>
+        </div>
+      </div>
+      <p class="marginalia" style="font-size:12.5px; margin:0">
+        Crée le repo, y copie le kit fleet-kit (workflows, CLAUDE.md, BACKLOG.md…), pose les labels,
+        et ouvre une issue de finition. Le secret Claude reste à poser via <code>/equiper</code> (une fois).
+      </p>
+    </div>
+    <div class="modal-foot">
+      <span class="poc-note"></span>
+      <button type="submit" class="btn btn-primary">⚒ Créer le projet</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js" defer></script>
+</body>
+</html>
