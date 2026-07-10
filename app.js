@@ -260,34 +260,35 @@ function buildModel(fleet, D){
 
 /* ================= Mode démo ================= */
 function demoModel(){
+  // Données factices et noms de projets fictifs — rien de la vraie flotte n'est exposé dans le code.
   const L=(c,t,small,act)=>({c,t,small,act});
   return {
     repos:[
-      {id:"atlas-quiz", type:"cron-node", life:"actif", state:"crit", last:"il y a 40 min", url:"#",
+      {id:"quiz-capitales", type:"cron-node", life:"actif", state:"crit", last:"il y a 40 min", url:"#",
         lines:[L("crit","publish-shorts.yml — 2 échecs consécutifs","il y a 40 min",{id:"demo",label:"Relancer"}), L("ok","retry-reels.yml — OK","cette nuit")]},
-      {id:"notes-bac-visualisateur", type:"static · kit 1.0.0", life:"actif", state:"info", last:"il y a 12 min", url:"#",
+      {id:"bulletins-viz", type:"static · kit 1.0.0", life:"actif", state:"info", last:"il y a 12 min", url:"#",
         lines:[L("info","Issue #18 « Export PDF » — session Actions en cours","12 min")]},
-      {id:"Oral-Francais-Talk-Show", type:"service-node", life:"actif", state:"warn", last:"hier", url:"#",
+      {id:"talk-show-oral", type:"service-node", life:"actif", state:"warn", last:"hier", url:"#",
         pr:{num:15,title:"Lecture audio iOS",checks:"checks ✓ 3/3",files:4,add:118,del:22,body:"Débloque l'AudioContext au premier geste utilisateur. Résout l'issue #12."},
         lines:[L("warn","PR #15 « Lecture audio iOS » — checks ✓, attend ta décision","depuis 15 h",{id:"demo",label:"Examiner"})]},
-      {id:"Recherche-Emploi", type:"cron-python", life:"actif", state:"calm", last:"07:05", url:"#",
+      {id:"veille-emploi", type:"cron-python", life:"actif", state:"calm", last:"07:05", url:"#",
         lines:[L("ok","veille.yml — OK","ce matin")]},
-      {id:"redirection-mail-fenetre", type:"cron-python", life:"veille", state:"calm", last:"lundi", url:"#",
+      {id:"digest-hebdo", type:"cron-python", life:"veille", state:"calm", last:"lundi", url:"#",
         lines:[L("ok","Dev en pause · weekly-digest.yml surveillé")]},
     ],
     ideas:[
-      {num:1,p:"P1",repo:"atlas-quiz",t:"Miniatures automatiques pour les shorts",url:"#"},
-      {num:2,p:"P2",repo:"notes-bac-visualisateur",t:"Comparaison des moyennes entre trimestres",url:"#"},
+      {num:1,p:"P1",repo:"quiz-capitales",t:"Miniatures automatiques pour les shorts",url:"#"},
+      {num:2,p:"P2",repo:"bulletins-viz",t:"Comparaison des moyennes entre trimestres",url:"#"},
       {num:3,p:"P3",repo:"flotte",t:"Statusline + raccourcis desktop",url:"#"},
     ],
     attention:[
-      {c:"crit",repo:"atlas-quiz",t:"publish-shorts en échec ×2",small:"il y a 40 min"},
-      {c:"warn",repo:"Oral-Francais-Talk-Show",t:"PR #15 attend ta décision",small:"depuis 15 h"},
+      {c:"crit",repo:"quiz-capitales",t:"publish-shorts en échec ×2",small:"il y a 40 min"},
+      {c:"warn",repo:"talk-show-oral",t:"PR #15 attend ta décision",small:"depuis 15 h"},
     ],
     feed:[
-      {ts:new Date().toISOString(),c:"ok",repo:"notes-bac-visualisateur",txt:"PR #17 self-heal mergée."},
-      {ts:new Date(Date.now()-3.6e6).toISOString(),c:"crit",repo:"atlas-quiz",txt:"publish-shorts.yml en échec."},
-      {ts:new Date(Date.now()-86400e3).toISOString(),c:"warn",repo:"Oral-Francais-Talk-Show",txt:"PR #15 ouverte par la session Actions."},
+      {ts:new Date().toISOString(),c:"ok",repo:"bulletins-viz",txt:"PR #17 self-heal mergée."},
+      {ts:new Date(Date.now()-3.6e6).toISOString(),c:"crit",repo:"quiz-capitales",txt:"publish-shorts.yml en échec."},
+      {ts:new Date(Date.now()-86400e3).toISOString(),c:"warn",repo:"talk-show-oral",txt:"PR #15 ouverte par la session Actions."},
     ],
   };
 }
@@ -347,10 +348,11 @@ function renderGrid(){
   $("#grid").innerHTML=visible.map(r=>{
     const st=STATES[r.state];
     const calmVeille=r.life==="veille"&&r.state==="calm";
+    const stColor=calmVeille?"var(--mut)":st.v;
     return `
-    <article class="card" data-life="${r.life}" data-card="${esc(r.id)}">
+    <article class="card" data-life="${r.life}" data-card="${esc(r.id)}" style="--st:${stColor}">
       <header class="card-head">
-        <span class="dot" style="--c:${calmVeille?"var(--mut)":st.v}"></span>
+        <span class="dot" style="--c:${stColor}"></span>
         <button class="repo-btn" data-open="${esc(r.id)}" title="Ouvrir ${esc(r.id)}">${esc(r.id)}</button>
         <span class="pill" style="--c:${calmVeille?"var(--mut)":st.v}">${calmVeille?"en veille":st.label}</span>
       </header>
