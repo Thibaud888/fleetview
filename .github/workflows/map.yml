@@ -1,0 +1,14 @@
+# Stub flotte : régénère MAP.md à chaque push sur main (logique dans fleet-kit).
+name: MAP
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["MAP.md"]
+  workflow_dispatch:
+jobs:
+  map:
+    uses: Thibaud888/fleet-kit/.github/workflows/map.yml@main
+    secrets: inherit
+    permissions:
+      contents: write
+      id-token: write

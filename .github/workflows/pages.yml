@@ -1,0 +1,16 @@
+# Stub flotte : déploiement GitHub Pages (logique dans fleet-kit/pages.yml).
+# Si le site a un build : renseigner build_command et output_dir.
+name: Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  pages:
+    uses: Thibaud888/fleet-kit/.github/workflows/pages.yml@main
+    permissions:
+      pages: write
+      id-token: write
+    # with:
+    #   build_command: "npm run build"
+    #   output_dir: "dist"

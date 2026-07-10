@@ -1,0 +1,18 @@
+# Stub flotte : dispatch Claude par issue labellisée `claude` ou commentaire `@claude`
+# (logique et garde-fous dans fleet-kit/dispatch.yml).
+name: Claude
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+jobs:
+  dispatch:
+    uses: Thibaud888/fleet-kit/.github/workflows/dispatch.yml@main
+    secrets: inherit
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
