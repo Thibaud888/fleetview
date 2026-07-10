@@ -1,0 +1,13 @@
+{
+  "name": "FleetView — il codice della bottega",
+  "short_name": "FleetView",
+  "description": "Tour de contrôle de la flotte : états des repos, codex des idées, sessions Claude.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#E9DFC7",
+  "theme_color": "#E9DFC7",
+  "lang": "fr",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
