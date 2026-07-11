@@ -13,6 +13,8 @@ styles.css              Tous les styles : 6 thèmes via CSS variables (De Vinci 
 app.js                  Comportement complet (aucune dépendance) : storage, API GitHub, chargement, rendus, actions
 manifest.webmanifest    PWA minimaliste, installation mobile
 icon.svg                Marque vitruvienne (cercle + carré)
+README.md               Page d'accueil : pitch rapide, installation express
+docs/GUIDE.md           Guide complet : concepts, usage, sécurité, archi, protocole cadrage
 scripts/verify.mjs      Vérification : site démarre et répond
 .github/workflows/      Stubs kit : claude.yml (dispatch), map.yml, pages.yml (déploiement)
 ```
