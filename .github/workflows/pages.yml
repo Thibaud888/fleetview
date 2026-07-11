@@ -7,6 +7,8 @@ on:
   workflow_dispatch:
 jobs:
   pages:
+    # Repo privé = Pages non activé : on saute le job ; se réactive tout seul au passage en public.
+    if: ${{ !github.event.repository.private }}
     uses: Thibaud888/fleet-kit/.github/workflows/pages.yml@main
     permissions:
       pages: write
