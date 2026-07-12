@@ -168,6 +168,12 @@ tes réponses sont postées comme commentaires `@claude …` qui relancent la se
 qu'un **bus de messages** ; toi, tu ne quittes jamais l'atelier. (Un lien « au besoin : GitHub ↗ »
 reste disponible dans la vue projet pour les rares cas où tu veux vraiment voir le dépôt.)
 
+> 💰 **1 commentaire = 1 lot.** Chaque réponse `@claude` relance une **session Actions
+> complète** (re-clone du repo + relecture de tout le fil) : c'est le budget API qui paie
+> chaque réplique. Groupe toutes tes remarques et réponses en **un seul commentaire** avant
+> d'envoyer — la session relit le fil entier de toute façon, un lot cohérent donne un
+> meilleur résultat qu'une rafale de petits messages, pour plusieurs fois moins de budget.
+
 ### Le cycle complet d'une demande
 ```
 Toi : "améliore X"  ─▶  issue claude+cadrage créée
