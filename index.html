@@ -97,7 +97,7 @@
         <p class="mic-interim" id="quick-mic-interim" hidden></p>
         <select id="quick-repo" class="theme-select" aria-label="Projet de l'idée" title="Projet de l'idée"></select>
         <input id="quick-input" type="text" placeholder="Noter une idée en vrac…" aria-label="Nouvelle idée">
-        <button class="btn btn-mic" id="quick-mic" type="button" aria-label="Dicter l'idée" title="Dicter l'idée" hidden>🎙️</button>
+        <button class="btn btn-mic" id="quick-mic" type="button" data-mic="#quick-input" data-mic-interim="#quick-mic-interim" aria-label="Dicter l'idée" title="Dicter l'idée">🎙️</button>
         <button class="btn" id="quick-add">＋</button>
       </div>
     </section>
@@ -133,6 +133,10 @@
       <div class="field">
         <label for="f-desc">Détails <small>— tout ce que tu as en tête, même en vrac</small></label>
         <textarea id="f-desc" placeholder="Le cadrage remettra tout au propre de toute façon."></textarea>
+        <div class="mic-row">
+          <button type="button" class="btn btn-mic" data-mic="#f-desc" data-mic-interim="#f-desc-interim" aria-label="Dicter les détails" title="Dicter les détails">🎙️</button>
+          <span class="mic-interim" id="f-desc-interim" hidden></span>
+        </div>
       </div>
       <div class="field">
         <label>Parcours</label>
@@ -149,6 +153,16 @@
         <label class="radio-card"><input type="radio" name="f-prio" value="P1"><span><b>P1</b><small>dès que possible</small></span></label>
         <label class="radio-card"><input type="radio" name="f-prio" value="P2" checked><span><b>P2</b><small>quand j'ai envie</small></span></label>
         <label class="radio-card"><input type="radio" name="f-prio" value="P3"><span><b>P3</b><small>un jour peut-être</small></span></label>
+      </div>
+      <div class="field prio-row" id="f-cat-row">
+        <select id="f-cat" class="theme-select" style="max-width:none; flex:1" aria-label="Catégorie de l'idée">
+          <option value="">💡 Divers</option>
+          <option value="feature">✨ Fonctionnalité</option>
+          <option value="bug">🐛 Correctif</option>
+          <option value="design">🎨 Design</option>
+          <option value="entretien">🧹 Entretien</option>
+          <option value="exploration">🔬 Exploration</option>
+        </select>
       </div>
       <div class="field" id="f-model-row">
         <label>Modèle d'implémentation</label>
