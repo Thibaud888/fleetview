@@ -317,6 +317,32 @@ code{font-family:var(--font-mono); font-size:.82em; background:var(--surface-2);
   padding:6px 10px; font-family:var(--font-sans); font-size:12.5px; font-style:italic; color:var(--mut);
   box-shadow:0 2px 8px rgba(0,0,0,.16);
 }
+.no-mic .btn-mic{display:none !important}
+.mic-row{display:flex; align-items:center; gap:8px; margin-top:7px; position:relative}
+.mic-row .mic-interim{left:0; right:auto; bottom:auto; position:static; margin:0; box-shadow:none; border:none; background:none; padding:0}
+
+/* Codex v2 : filtre projet, groupes par catégorie, dépliage & édition */
+.ideas-toolbar{padding:10px 16px 9px; border-bottom:1px solid var(--line)}
+.ideas-toolbar select{width:100%; max-width:none}
+.cat-head{padding:11px 16px 4px; border-bottom:1px solid var(--line); background:var(--surface-2)}
+.idea-body[data-idea-toggle]{cursor:pointer}
+.idea.open{border-bottom:none}
+.idea-more{padding:2px 16px 13px 43px; border-bottom:1px solid var(--line)}
+.idea-desc{margin:0 0 9px; font-size:13px; color:var(--ink-soft); white-space:pre-wrap}
+.idea-tools{display:flex; gap:9px; align-items:center; flex-wrap:wrap}
+.idea-tools .ghlink{margin-left:auto; font-family:var(--font-mono); font-size:11px}
+.idea-edit{display:flex; flex-direction:column; gap:8px}
+.idea-edit input,.idea-edit textarea,.idea-edit select{
+  border:1px solid var(--line-strong); border-radius:var(--r-sm); background:var(--surface);
+  color:var(--ink); padding:7px 10px; font-family:var(--font-sans); font-size:13.5px; min-width:0;
+}
+.idea-edit textarea{min-height:62px; resize:vertical}
+.idea-edit .row{display:flex; gap:8px}
+.idea-edit .row select{flex:1}
+
+/* Options sous les zones de réponse (vue projet) */
+.reply-opt{display:flex; gap:7px; align-items:flex-start; margin-top:7px; font-size:12.5px; color:var(--ink-soft); cursor:pointer}
+.reply-opt input{margin-top:2px; accent-color:var(--accent)}
 
 /* ============ CHRONIQUES ============ */
 .feed{list-style:none; margin:0; padding:6px 0}

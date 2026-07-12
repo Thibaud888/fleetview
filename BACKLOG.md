@@ -3,6 +3,9 @@
 > 1 item = 1 session Claude (issue labellisée `claude` ou session Cloud) = 1 PR.
 > Cocher + lien PR quand c'est mergé. `/dispatch` (claude-ops) lit ce fichier.
 
+- [x] Retours UX mobile (lot 1) : filtre « En action », paramètres ⚙ (thème + token), retrait du + mobile — [PR #13](https://github.com/Thibaud888/fleetview/pull/13).
+- [x] Retours UX mobile (lot 2) : codex v2 (détails, catégories, édition, suppression, filtre par projet), micro partout (demande, réponses, édition d'idée), option « cadrer d'abord » sur les demandes de changements.
+
 - [x] Service worker + cache hors-ligne — `sw.js` pré-cache la coquille (stale-while-revalidate), le dernier relevé est persisté et réaffiché avec un bandeau « hors ligne » ; l'API GitHub n'est jamais mise en cache (issue #8).
 - [x] Icônes PWA PNG maskable (192/512) + apple-touch — installation propre sur Android : l'icône vitruvienne s'affiche masquée, pas une capture ; générées depuis `icon.svg` par `scripts/icons.mjs` (issue #7).
 - [ ] Journal de run en direct dans la vue projet — bouton « Suivre » affiche les logs du run Actions ; DoD : logs visibles et rafraîchis pendant un run réel.

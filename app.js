@@ -27,12 +27,22 @@ const STATES = {
   calm:{label:"calme",       v:"var(--ok)",   order:3},
 };
 const PRIO_COLOR = {P1:"var(--crit)", P2:"var(--warn)", P3:"var(--mut)"};
+const PRIO_LABEL_COLOR = {P1:"C1442E", P2:"C99A3F", P3:"8A7A63"};
 const MODEL_LABEL = {haiku:"claude:haiku", opus:"claude:opus", fable:"claude:fable"};
+// Catégories du codex (label GitHub `cat:<clé>` sur l'issue idée)
+const IDEA_CATS = {
+  feature:    {e:"✨", l:"Fonctionnalité", color:"2E86AB"},
+  bug:        {e:"🐛", l:"Correctif",      color:"C1442E"},
+  design:     {e:"🎨", l:"Design",         color:"B85C9E"},
+  entretien:  {e:"🧹", l:"Entretien",      color:"8A7A63"},
+  exploration:{e:"🔬", l:"Exploration",    color:"4F6B2C"},
+};
 
 let model = null;          // { repos:[], ideas:[], attention:[], feed:[] }
 let fleetFile = null;      // { json, sha }
 let ui = { filter:"all", openRepo:null, lastSync:null, loading:false };
 let ideaLaunchCtx = null;  // idée en cours de lancement (depuis le codex)
+let ideaUI = { repoFilter:"all", open:null, edit:null }; // état du codex (filtre projet, idée dépliée/éditée)
 const labelCache = new Set();
 
 /* ================= Utilitaires ================= */
@@ -253,9 +263,14 @@ function buildModel(fleet, D){
 
   // Codex des idées (issues `idée` de claude-ops)
   const ideas = (D.ideasRaw||[]).filter(i=>!i.pull_request).map(i=>{
-    const m=(i.body||"").match(/\*\*Projet\*\*\s*:\s*(\S+)/);
-    const p=(i.labels||[]).map(l=>l.name).find(n=>/^P[123]$/.test(n))||"P3";
-    return {num:i.number, p, repo:m?m[1]:"flotte", t:i.title, url:i.html_url, created:i.created_at};
+    const body=i.body||"";
+    const m=body.match(/\*\*Projet\*\*\s*:\s*(\S+)/);
+    const names=(i.labels||[]).map(l=>l.name);
+    const p=names.find(n=>/^P[123]$/.test(n))||"P3";
+    const catRaw=(names.find(n=>n.startsWith("cat:"))||"").slice(4);
+    const desc=body.replace(/\*\*Projet\*\*\s*:\s*\S+\s*/,"").replace(/_Créée depuis FleetView\.?_\s*$/,"").trim();
+    return {num:i.number, p, repo:m?m[1]:"flotte", t:i.title, desc,
+      cat:IDEA_CATS[catRaw]?catRaw:null, url:i.html_url, created:i.created_at};
   });
 
   feed.sort((a,b)=>b.ts<a.ts?-1:1);
@@ -281,9 +296,10 @@ function demoModel(){
         lines:[L("ok","Dev en pause · weekly-digest.yml surveillé")]},
     ],
     ideas:[
-      {num:1,p:"P1",repo:"quiz-capitales",t:"Miniatures automatiques pour les shorts",url:"#"},
-      {num:2,p:"P2",repo:"bulletins-viz",t:"Comparaison des moyennes entre trimestres",url:"#"},
-      {num:3,p:"P3",repo:"flotte",t:"Statusline + raccourcis desktop",url:"#"},
+      {num:1,p:"P1",repo:"quiz-capitales",t:"Miniatures automatiques pour les shorts",desc:"Générer la miniature depuis la première question du quiz, avec le drapeau en fond.",cat:"feature",url:"#"},
+      {num:2,p:"P2",repo:"bulletins-viz",t:"Comparaison des moyennes entre trimestres",desc:"",cat:"feature",url:"#"},
+      {num:3,p:"P3",repo:"flotte",t:"Statusline + raccourcis desktop",desc:"",cat:"exploration",url:"#"},
+      {num:4,p:"P3",repo:"flotte",t:"Corriger l'alignement du pied de page",desc:"",cat:"bug",url:"#"},
     ],
     attention:[
       {c:"crit",repo:"quiz-capitales",t:"publish-shorts en échec ×2",small:"il y a 40 min"},
@@ -382,16 +398,65 @@ function renderArchived(){
       <button class="btn-mini" data-unarchive="${esc(a.id)}">Réactiver</button>
     </div>`).join("");
 }
+function ideaEditHtml(i){
+  const repos=["flotte",...model.repos.filter(r=>r.life!=="archive").map(r=>r.id)];
+  if(!repos.includes(i.repo)) repos.push(i.repo);
+  return `<div class="idea-edit">
+    <input id="ie-title" type="text" value="${esc(i.t)}" aria-label="Titre de l'idée">
+    <textarea id="ie-desc" placeholder="Détails (optionnel)" aria-label="Détails">${esc(i.desc||"")}</textarea>
+    <div class="row">
+      <select id="ie-repo" aria-label="Projet">${repos.map(x=>`<option value="${esc(x)}"${x===i.repo?" selected":""}>${esc(x)}</option>`).join("")}</select>
+      <select id="ie-prio" aria-label="Priorité">${["P1","P2","P3"].map(p=>`<option${p===i.p?" selected":""}>${p}</option>`).join("")}</select>
+      <select id="ie-cat" aria-label="Catégorie"><option value="">💡 Divers</option>${Object.entries(IDEA_CATS).map(([k,c])=>
+        `<option value="${k}"${i.cat===k?" selected":""}>${c.e} ${c.l}</option>`).join("")}</select>
+    </div>
+    <div class="idea-tools">
+      <button class="btn btn-primary" data-idea-save="${i.num}">Enregistrer</button>
+      <button class="btn" data-idea-cancel="${i.num}">Annuler</button>
+      <button class="btn btn-mic" type="button" data-mic="#ie-desc" title="Dicter les détails">🎙️</button>
+    </div>
+  </div>`;
+}
 function renderIdeas(){
+  // Édition en cours : ne pas écraser la saisie au relevé automatique.
+  if(ideaUI.edit!==null && $("#ie-title")) return;
   const order={P1:0,P2:1,P3:2};
-  const list=model.ideas.slice().sort((a,b)=>order[a.p]-order[b.p]||a.num-b.num);
+  let list=model.ideas.slice().sort((a,b)=>order[a.p]-order[b.p]||a.num-b.num);
   $("#ideas-count").textContent=model.ideas.length;
-  $("#ideas").innerHTML=list.map(i=>`
-    <div class="idea">
+  const repos=[...new Set(model.ideas.map(i=>i.repo))].sort();
+  if(ideaUI.repoFilter!=="all"&&!repos.includes(ideaUI.repoFilter)) ideaUI.repoFilter="all";
+  if(ideaUI.repoFilter!=="all") list=list.filter(i=>i.repo===ideaUI.repoFilter);
+  const toolbar=model.ideas.length?`<div class="ideas-toolbar">
+    <select id="ideas-repo-filter" class="theme-select" aria-label="Filtrer par projet">
+      <option value="all">Tous les projets</option>
+      ${repos.map(r=>`<option value="${esc(r)}"${ideaUI.repoFilter===r?" selected":""}>${esc(r)}</option>`).join("")}
+    </select></div>`:"";
+  const rowHtml=(i)=>{
+    const open=ideaUI.open===i.num, edit=ideaUI.edit===i.num;
+    return `
+    <div class="idea${open?" open":""}" data-idea="${i.num}">
       <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
-      <span class="idea-body">${esc(i.t)}<span class="idea-repo">${esc(i.repo)}</span></span>
+      <span class="idea-body" data-idea-toggle="${i.num}" role="button" tabindex="0">${esc(i.t)}<span class="idea-repo">${esc(i.repo)}${i.desc?" · …":""}</span></span>
       <button class="idea-launch" data-launch="${i.num}" title="Détailler puis lancer">🚀</button>
-    </div>`).join("")||`<p style="padding:12px 15px" class="marginalia">Codex vide — note une idée ci-dessous.</p>`;
+    </div>
+    ${open?`<div class="idea-more">${edit?ideaEditHtml(i):`
+      ${i.desc?`<p class="idea-desc">${esc(i.desc)}</p>`:""}
+      <div class="idea-tools">
+        <button class="btn-mini" data-idea-edit="${i.num}">✎ Modifier</button>
+        <button class="btn-mini" data-idea-del="${i.num}">🗑 Supprimer</button>
+        <a class="ghlink" href="${esc(i.url)}" target="_blank" rel="noopener">issue ↗</a>
+      </div>`}
+    </div>`:""}`;
+  };
+  let html=toolbar;
+  for(const c of [...Object.keys(IDEA_CATS),""]){
+    const group=list.filter(i=>(i.cat||"")===c);
+    if(!group.length) continue;
+    const head=c?`${IDEA_CATS[c].e} ${IDEA_CATS[c].l}`:"💡 Divers";
+    html+=`<div class="cat-head eyebrow">${head} · <span class="num">${group.length}</span></div>`+group.map(rowHtml).join("");
+  }
+  if(model.ideas.length&&!list.length) html+=`<p style="padding:12px 15px" class="marginalia">Aucune idée pour ce projet.</p>`;
+  $("#ideas").innerHTML=html||`<p style="padding:12px 15px" class="marginalia">Codex vide — note une idée ci-dessous.</p>`;
 }
 function renderFeed(){
   let html="", day=null;
@@ -424,9 +489,14 @@ function renderDetail(){
         <button class="btn btn-primary" data-act="merge" data-n="${r.pr.num}">✓ Merger (squash)</button>
         <button class="btn" data-act="pr-comment" data-n="${r.pr.num}">💬 Demander des changements</button>
       </div>
-      <div class="reply" id="pr-reply" hidden>
-        <textarea id="pr-reply-text" placeholder="Ce qui doit changer — envoyé à Claude sur la PR…"></textarea>
-        <button class="btn" data-act="pr-comment-send" data-n="${r.pr.num}">Envoyer</button>
+      <div id="pr-reply" hidden>
+        <div class="reply">
+          <textarea id="pr-reply-text" placeholder="Ce qui doit changer — envoyé à Claude sur la PR…"></textarea>
+          <button type="button" class="btn btn-mic" data-mic="#pr-reply-text" title="Dicter">🎙️</button>
+          <button class="btn" data-act="pr-comment-send" data-n="${r.pr.num}">Envoyer</button>
+        </div>
+        <label class="reply-opt"><input type="checkbox" id="pr-reply-cadrage" checked>
+          🪶 cadrer d'abord — Claude propose un plan en commentaire, tu réponds « GO » pour qu'il l'applique</label>
       </div>
     </div>`:"";
 
@@ -442,6 +512,7 @@ function renderDetail(){
       </div>
       <div class="reply">
         <textarea id="thread-reply" placeholder="Répondre à Claude…"></textarea>
+        <button type="button" class="btn btn-mic" data-mic="#thread-reply" title="Dicter">🎙️</button>
         <button class="btn" data-act="thread-send" data-n="${th.num}">Envoyer</button>
       </div>
       ${th.cadrage?`<div class="block-actions" style="margin-top:8px">
@@ -541,13 +612,15 @@ ${desc||title}
 
 _Créée depuis FleetView (parcours cadrage)._`;
 }
-async function createRequest({repo,title,desc,mode,modelChoice,prio}){
+async function createRequest({repo,title,desc,mode,modelChoice,prio,cat}){
   if(demo){ toast("Mode démo — rien n'est envoyé. Relie ton token pour agir en vrai."); return; }
   if(mode==="box"){
     await ensureLabel(META,"idée","E9C46A","Boîte à idées FleetView");
-    await ensureLabel(META,prio,{P1:"C1442E",P2:"C99A3F",P3:"8A7A63"}[prio],"Priorité codex");
+    await ensureLabel(META,prio,PRIO_LABEL_COLOR[prio],"Priorité codex");
+    const labels=["idée",prio];
+    if(cat&&IDEA_CATS[cat]){ labels.push("cat:"+cat); await ensureLabel(META,"cat:"+cat,IDEA_CATS[cat].color,"Catégorie codex : "+IDEA_CATS[cat].l); }
     const body=`**Projet** : ${repo}\n\n${desc||""}\n\n_Créée depuis FleetView._`;
-    const is=await gh(`/repos/${OWNER}/${META}/issues`,{method:"POST",body:{title,body,labels:["idée",prio]}});
+    const is=await gh(`/repos/${OWNER}/${META}/issues`,{method:"POST",body:{title,body,labels}});
     toast(`💡 Idée #${is.number} rangée au codex (${prio}, projet ${repo}).`);
     return is;
   }
@@ -564,11 +637,42 @@ async function createRequest({repo,title,desc,mode,modelChoice,prio}){
     :`⚡ Issue #${is.number} lancée sur ${target} — session Actions en route, la PR apparaîtra ici.`, 5600);
   return is;
 }
+async function saveIdea(num){
+  if(demo){ toast("Mode démo — rien n'est envoyé."); return; }
+  const title=$("#ie-title").value.trim();
+  if(!title){ toast("Un titre est requis."); return; }
+  const desc=$("#ie-desc").value.trim();
+  const repo=$("#ie-repo").value, prio=$("#ie-prio").value, cat=$("#ie-cat").value;
+  await ensureLabel(META,prio,PRIO_LABEL_COLOR[prio],"Priorité codex");
+  const labels=["idée",prio];
+  if(cat){ labels.push("cat:"+cat); await ensureLabel(META,"cat:"+cat,IDEA_CATS[cat].color,"Catégorie codex : "+IDEA_CATS[cat].l); }
+  const body=`**Projet** : ${repo}\n\n${desc||""}\n\n_Créée depuis FleetView._`;
+  await gh(`/repos/${OWNER}/${META}/issues/${num}`,{method:"PATCH",body:{title,body,labels}});
+  ideaUI.edit=null;
+  toast("✎ Idée mise à jour.");
+}
+async function removeIdea(num){
+  if(demo){ toast("Mode démo — rien n'est envoyé."); return; }
+  await gh(`/repos/${OWNER}/${META}/issues/${num}/comments`,{method:"POST",body:{body:"→ retirée du codex depuis FleetView."}});
+  await gh(`/repos/${OWNER}/${META}/issues/${num}`,{method:"PATCH",body:{state:"closed",state_reason:"not_planned"}});
+  ideaUI.open=null; ideaUI.edit=null;
+  toast("🗑 Idée retirée du codex.");
+}
 async function closeIdea(num, launchedUrl){
   try{
     await gh(`/repos/${OWNER}/${META}/issues/${num}/comments`,{method:"POST",body:{body:`→ lancée : ${launchedUrl}`}});
     await gh(`/repos/${OWNER}/${META}/issues/${num}`,{method:"PATCH",body:{state:"closed"}});
   }catch(e){}
+}
+// Habille une demande de changements du protocole cadrage (plan proposé en commentaire, GO pour appliquer).
+function changesCadrage(text){
+  return `**PHASE 1 — CADRAGE (ne code pas encore)**
+Reformule cette demande de changements en plan d'action concret (fichiers touchés, étapes, critères vérifiables) et poste-le en COMMENTAIRE de cette PR, avec tes questions numérotées s'il y en a. Puis attends.
+
+**PHASE 2** — uniquement après un commentaire de ${OWNER} contenant « GO » : applique le plan validé sur cette branche.
+
+**Demande brute :**
+${text}`;
 }
 async function sendComment(repo,num,text){
   if(demo){ toast("Mode démo — rien n'est envoyé."); return; }
@@ -696,6 +800,7 @@ function openModal(opts){
   $("#form-new").reset();
   if(opts.repo) sel.value=opts.repo;
   $("#f-title").value=opts.title||"";
+  $("#f-desc").value=opts.desc||"";
   $("#modal-title").textContent=opts.title?"Lancer cette idée":"Nouvelle demande";
   $("#opt-box").style.display=opts.hideBox?"none":"";
   $("#modal-note").textContent=demo?"Mode démo : aucune action réelle.":"";
@@ -707,6 +812,7 @@ function openModal(opts){
 function syncWhen(){
   const v=document.querySelector('input[name="f-when"]:checked').value;
   $("#f-prio-row").classList.toggle("on",v==="box");
+  $("#f-cat-row").classList.toggle("on",v==="box");
   $("#f-model-row").style.display=v==="box"?"none":"";
   $("#f-submit").textContent={cadrage:"🪶 Cadrer avec Claude",direct:"⚡ Créer l'issue",box:"💡 Ranger au codex"}[v];
 }
@@ -733,7 +839,7 @@ document.addEventListener("click",async(e)=>{
     if(b.dataset.newfor!==undefined){ openModal({repo:b.dataset.newfor}); return; }
     if(b.dataset.launch!==undefined){
       const idea=model.ideas.find(i=>i.num===Number(b.dataset.launch));
-      if(idea){ ideaLaunchCtx=idea; openModal({repo:idea.repo==="flotte"?"flotte":idea.repo,title:idea.t,hideBox:true}); }
+      if(idea){ ideaLaunchCtx=idea; openModal({repo:idea.repo==="flotte"?"flotte":idea.repo,title:idea.t,desc:idea.desc,hideBox:true}); }
       return;
     }
     if(b.dataset.unarchive!==undefined){
@@ -751,7 +857,8 @@ document.addEventListener("click",async(e)=>{
           case "merge": if(r){ b.disabled=true; await mergePr(r.id,n); await refresh(); } break;
           case "pr-comment": $("#pr-reply").hidden=false; $("#pr-reply-text").focus(); break;
           case "pr-comment-send": if(r){ const v=$("#pr-reply-text").value.trim(); if(!v)break;
-            b.disabled=true; await sendComment(r.id,n,v); await refresh(); } break;
+            const cadre=$("#pr-reply-cadrage")&&$("#pr-reply-cadrage").checked;
+            b.disabled=true; await sendComment(r.id,n,cadre?changesCadrage(v):v); await refresh(); } break;
           case "thread-send": if(r){ const v=$("#thread-reply").value.trim(); if(!v)break;
             b.disabled=true; await sendComment(r.id,n,v); await refresh(); } break;
           case "go": if(r){ b.disabled=true;
@@ -780,9 +887,10 @@ $("#form-new").addEventListener("submit",async(e)=>{
   const mode=document.querySelector('input[name="f-when"]:checked').value;
   const modelChoice=document.querySelector('input[name="f-model"]:checked').value;
   const prio=document.querySelector('input[name="f-prio"]:checked').value;
+  const cat=$("#f-cat").value;
   const ctx=ideaLaunchCtx; ideaLaunchCtx=null;
   try{
-    const is=await createRequest({repo,title,desc,mode,modelChoice,prio});
+    const is=await createRequest({repo,title,desc,mode,modelChoice,prio,cat});
     if(ctx&&is&&mode!=="box") await closeIdea(ctx.num,is.html_url);
     await refresh(false);
   }catch(err){ toast("Échec : "+err.message, 6000); }
@@ -803,6 +911,36 @@ $("#form-projet").addEventListener("submit",async(e)=>{
 });
 
 $("#btn-refresh").addEventListener("click",()=>refresh());
+
+/* Codex : déplier, éditer, supprimer, filtrer par projet */
+$("#ideas").addEventListener("click",async(e)=>{
+  const t=e.target.closest("[data-idea-toggle],[data-idea-edit],[data-idea-del],[data-idea-save],[data-idea-cancel]");
+  if(!t) return;
+  const d=t.dataset;
+  try{
+    if(d.ideaToggle!==undefined){
+      const n=Number(d.ideaToggle);
+      ideaUI.open=ideaUI.open===n?null:n; ideaUI.edit=null; renderIdeas();
+    } else if(d.ideaEdit!==undefined){
+      ideaUI.open=Number(d.ideaEdit); ideaUI.edit=Number(d.ideaEdit); renderIdeas();
+    } else if(d.ideaCancel!==undefined){
+      ideaUI.edit=null; renderIdeas();
+    } else if(d.ideaSave!==undefined){
+      t.disabled=true; await saveIdea(Number(d.ideaSave)); await refresh(false);
+    } else if(d.ideaDel!==undefined){
+      if(!confirm("Retirer cette idée du codex ?")) return;
+      t.disabled=true; await removeIdea(Number(d.ideaDel)); await refresh(false);
+    }
+  }catch(err){ t.disabled=false; toast("Échec : "+err.message, 6000); }
+});
+$("#ideas").addEventListener("change",(e)=>{
+  if(e.target.id==="ideas-repo-filter"){ ideaUI.repoFilter=e.target.value; renderIdeas(); }
+});
+$("#ideas").addEventListener("keydown",(e)=>{
+  const t=e.target.closest("[data-idea-toggle]");
+  if(t&&(e.key==="Enter"||e.key===" ")){ e.preventDefault(); t.click(); }
+});
+
 $("#quick-add").addEventListener("click",async()=>{
   const v=$("#quick-input").value.trim(); if(!v) return;
   const repo=$("#quick-repo").value||"flotte";
@@ -814,51 +952,54 @@ $("#quick-add").addEventListener("click",async()=>{
 });
 $("#quick-input").addEventListener("keydown",(e)=>{ if(e.key==="Enter"){ e.preventDefault(); $("#quick-add").click(); } });
 
-/* ================= Dictée vocale (codex idées) ================= */
+/* ================= Dictée vocale (générique : tout bouton [data-mic]) =================
+   data-mic="#selecteur" cible le champ à remplir ; data-mic-interim="#sel" (optionnel)
+   affiche le texte provisoire. Le texte final s'AJOUTE au contenu, sans l'écraser. */
 (function initMic(){
-  const btn=$("#quick-mic");
   const Ctor=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!Ctor) return; // API absente (ex. Firefox) : le bouton reste masqué
-  const input=$("#quick-input");
-  const interimEl=$("#quick-mic-interim");
-  const rec=new Ctor();
-  rec.lang="fr-FR"; rec.interimResults=true; rec.continuous=false;
-  let listening=false, baseValue="";
-  function setListening(on){
-    listening=on; btn.classList.toggle("on",on);
-    if(!on){ interimEl.hidden=true; interimEl.textContent=""; }
-  }
-  function appendFinal(text){
-    const t=text.trim(); if(!t) return;
-    baseValue = baseValue ? (baseValue+" "+t) : t;
-    input.value=baseValue;
-  }
-  rec.addEventListener("result",(e)=>{
-    let interim="";
-    for(let i=e.resultIndex;i<e.results.length;i++){
-      const res=e.results[i];
-      if(res.isFinal) appendFinal(res[0].transcript);
-      else interim+=res[0].transcript;
-    }
-    if(interim){ interimEl.textContent=interim; interimEl.hidden=false; }
-    else { interimEl.hidden=true; interimEl.textContent=""; }
+  if(!Ctor){ document.documentElement.classList.add("no-mic"); return; } // API absente : boutons masqués en CSS
+  let rec=null, activeBtn=null;
+  function stopRec(){ if(rec){ try{ rec.stop(); }catch(e){} } }
+  document.addEventListener("click",(e)=>{
+    const btn=e.target.closest("[data-mic]");
+    if(!btn) return;
+    if(activeBtn===btn){ stopRec(); return; } // second appui : arrêt
+    stopRec();
+    const target=document.querySelector(btn.dataset.mic);
+    if(!target) return;
+    const interimEl=btn.dataset.micInterim?document.querySelector(btn.dataset.micInterim):null;
+    let base=target.value;
+    const r=new Ctor();
+    r.lang="fr-FR"; r.interimResults=true; r.continuous=false;
+    r.addEventListener("result",(ev)=>{
+      let interim="";
+      for(let i=ev.resultIndex;i<ev.results.length;i++){
+        const res=ev.results[i];
+        if(res.isFinal){
+          const t=res[0].transcript.trim();
+          if(t){ base = base ? (base+" "+t) : t; target.value=base; }
+        } else interim+=res[0].transcript;
+      }
+      if(interimEl){
+        if(interim){ interimEl.textContent=interim; interimEl.hidden=false; }
+        else { interimEl.hidden=true; interimEl.textContent=""; }
+      }
+    });
+    r.addEventListener("end",()=>{
+      btn.classList.remove("on");
+      if(activeBtn===btn){ activeBtn=null; rec=null; }
+      if(interimEl){ interimEl.hidden=true; interimEl.textContent=""; }
+    });
+    r.addEventListener("error",(ev)=>{
+      if(ev.error==="not-allowed"||ev.error==="service-not-allowed"){
+        toast("Micro refusé : autorise le micro pour ce site (cadenas ou ⋮ dans la barre d'adresse → Autorisations).", 6000);
+      } else if(ev.error!=="no-speech" && ev.error!=="aborted"){
+        toast("Dictée vocale indisponible pour le moment.");
+      }
+    });
+    try{ r.start(); rec=r; activeBtn=btn; btn.classList.add("on"); }
+    catch(err){ btn.classList.remove("on"); }
   });
-  rec.addEventListener("end",()=>setListening(false));
-  rec.addEventListener("error",(e)=>{
-    setListening(false);
-    if(e.error==="not-allowed"||e.error==="service-not-allowed"){
-      toast("Micro refusé : autorise l'accès au micro pour dicter une idée.");
-    } else if(e.error!=="no-speech" && e.error!=="aborted"){
-      toast("Dictée vocale indisponible pour le moment.");
-    }
-  });
-  btn.addEventListener("click",()=>{
-    if(listening){ rec.stop(); return; }
-    baseValue=input.value;
-    try{ rec.start(); setListening(true); }
-    catch(err){ setListening(false); }
-  });
-  btn.hidden=false;
 })();
 
 $("#token-save").addEventListener("click",async()=>{
