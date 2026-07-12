@@ -242,7 +242,19 @@
       </select>
     </div>
     <div class="field">
-      <label for="ntfy-input">🔔 Notifications (ntfy)</label>
+      <label>🔔 Notifications</label>
+      <div class="settings-row">
+        <button type="button" class="btn" id="notif-native">Activer sur cet appareil</button>
+        <span class="marginalia" id="notif-status" style="font-size:12.5px; align-self:center"></span>
+      </div>
+      <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
+        FleetView notifie <b>directement</b> ton appareil — aucun service tiers. Uniquement quand Claude te pose
+        une question ou qu'une PR est prête ; le clic ouvre le bon projet. La détection tourne tant que
+        FleetView est ouvert (même en arrière-plan).
+      </p>
+    </div>
+    <div class="field">
+      <label for="ntfy-input">… ou via ntfy <small>— optionnel, si tu préfères l'app ntfy</small></label>
       <input id="ntfy-input" type="text" inputmode="url" placeholder="https://ntfy.sh/mon-sujet-secret" autocomplete="off" aria-label="URL du sujet ntfy">
       <div class="settings-row">
         <button type="button" class="btn" id="ntfy-save">Enregistrer</button>
@@ -250,9 +262,8 @@
         <button type="button" class="btn" id="ntfy-clear">Désactiver</button>
       </div>
       <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
-        Installe l'app <b>ntfy</b> et abonne-toi à un sujet secret. Push <b>uniquement</b> quand Claude te pose une
-        question ou qu'une PR est prête ; le lien ouvre FleetView sur le bon projet. L'URL reste dans ce navigateur ;
-        la détection tourne tant que FleetView est ouvert (ou en onglet d'arrière-plan).
+        Mêmes règles que ci-dessus, mais livré via l'app <b>ntfy</b> (abonne-toi au même sujet secret dans l'app).
+        L'URL reste dans ce navigateur.
       </p>
     </div>
     <div class="field">

@@ -3,7 +3,7 @@
 "use strict";
 
 // Version du cache : à incrémenter quand la coquille change (purge les anciens à l'activation).
-const VERSION = "fleetview-shell-v2";
+const VERSION = "fleetview-shell-v3";
 
 // Coquille pré-cachée. Chemins RELATIFS : le SW vit sous /fleetview/ sur GitHub Pages,
 // ils résolvent donc dans ce sous-dossier (et en local sous /).
@@ -32,6 +32,20 @@ self.addEventListener("activate", (e) => {
     caches.keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
+  );
+});
+
+// Clic sur une notification native : rouvre (ou re-focalise) FleetView sur le bon projet.
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || "./";
+  e.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if ("focus" in c) { if ("navigate" in c) c.navigate(url); return c.focus(); }
+      }
+      return self.clients.openWindow(url);
+    })
   );
 });
 
