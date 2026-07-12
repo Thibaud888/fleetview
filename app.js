@@ -121,9 +121,13 @@ async function gh(path, opts={}){
 const enc = encodeURIComponent;
 
 // Quota API : lit les en-têtes x-ratelimit-* de chaque réponse, alerte sous 500.
+// Ne retenir que la ressource "core" (5000 req/h) : /search/* a son propre compteur
+// (30 req/min), bien plus bas, qui fausserait l'alerte si on le mélangeait au reste.
 function captureRate(res){
   const rem=res.headers.get("x-ratelimit-remaining");
   if(rem===null) return;
+  const resource=res.headers.get("x-ratelimit-resource")||"core";
+  if(resource!=="core") return;
   rateInfo={ remaining:Number(rem),
     limit:Number(res.headers.get("x-ratelimit-limit")||0),
     reset:Number(res.headers.get("x-ratelimit-reset")||0)*1000 };
