@@ -324,6 +324,7 @@ function renderFilters(){
   const R=model.repos;
   const defs=[
     {id:"all",l:"Tous",n:R.filter(r=>r.life!=="archive").length},
+    {id:"action",l:"En action",n:R.filter(r=>r.life==="actif"&&r.state!=="calm").length},
     {id:"crit",l:"À débloquer",n:R.filter(r=>r.state==="crit"&&r.life!=="archive").length},
     {id:"info",l:"En session",n:R.filter(r=>r.state==="info"&&r.life!=="archive").length},
     {id:"warn",l:"En attente",n:R.filter(r=>r.state==="warn"&&r.life!=="archive").length},
@@ -342,6 +343,7 @@ function renderGrid(){
   const visible=model.repos.filter(r=>{
     if(r.life==="archive") return false;
     if(ui.filter==="all") return true;
+    if(ui.filter==="action") return r.life==="actif"&&r.state!=="calm"; // tout sauf calmes et veille
     if(ui.filter==="veille") return r.life==="veille";
     if(ui.filter==="calm") return r.state==="calm"&&r.life==="actif";
     return r.state===ui.filter;
@@ -787,7 +789,6 @@ $("#form-new").addEventListener("submit",async(e)=>{
 });
 document.querySelectorAll('input[name="f-when"]').forEach(x=>x.addEventListener("change",syncWhen));
 $("#btn-new").addEventListener("click",()=>openModal());
-$("#bb-new").addEventListener("click",()=>openModal());
 $("#modal-close").addEventListener("click",()=>modal.close());
 $("#btn-newproject").addEventListener("click",()=>modalProjet.showModal());
 $("#link-newproject").addEventListener("click",(e)=>{e.preventDefault();modal.close();modalProjet.showModal();});
@@ -871,6 +872,16 @@ $("#demo-link").addEventListener("click",async(e)=>{
   e.preventDefault(); demo=true; showConfig(false);
   banner("Mode démo : données factices, aucune action réelle. Recharge la page pour relier ton token.","info");
   await refresh();
+});
+
+/* ================= Paramètres ================= */
+const modalSettings=$("#modal-settings");
+$("#btn-settings").addEventListener("click",()=>modalSettings.showModal());
+$("#modal-settings-close").addEventListener("click",()=>modalSettings.close());
+$("#btn-change-token").addEventListener("click",()=>{
+  modalSettings.close();
+  $("#token-input").value="";
+  showConfig(true); // l'ancien token reste actif tant qu'un nouveau n'est pas relié
 });
 
 /* ================= Thème ================= */
