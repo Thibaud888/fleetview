@@ -33,17 +33,10 @@
     <div class="sum" id="summary" aria-label="Synthèse de la flotte"></div>
     <div class="topbar-actions">
       <span class="refresh-note num" id="sync-note"></span>
-      <select id="theme-select" class="theme-select" title="Thème" aria-label="Thème">
-        <option value="devinci">De Vinci</option>
-        <option value="clair">Clair</option>
-        <option value="sombre">Sombre</option>
-        <option value="ocean">Océan</option>
-        <option value="foret">Forêt</option>
-        <option value="montagnes">Montagnes</option>
-      </select>
       <button class="btn btn-icon" id="btn-refresh" title="Rafraîchir maintenant">⟳</button>
       <button class="btn btn-secondary-desktop" id="btn-newproject" hidden>⚒ Nouveau projet</button>
       <button class="btn btn-primary" id="btn-new" hidden>＋ Demande</button>
+      <button class="btn btn-icon" id="btn-settings" title="Paramètres" aria-label="Paramètres">⚙</button>
     </div>
   </div>
 </header>
@@ -118,7 +111,6 @@
 <nav class="bottombar" aria-label="Sections" id="bottombar" hidden>
   <button class="bb-btn" data-tab="flotte" aria-pressed="true">Atelier</button>
   <button class="bb-btn" data-tab="idees" aria-pressed="false">Codex <span class="n num" id="tab-idees-n"></span></button>
-  <button class="bb-plus" id="bb-new" aria-label="Nouvelle demande">＋</button>
   <button class="bb-btn" data-tab="activite" aria-pressed="false">Chroniques</button>
 </nav>
 
@@ -218,6 +210,32 @@
       <button type="submit" class="btn btn-primary">⚒ Créer le projet</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="modal-settings">
+  <div class="modal-head">
+    <h2>Paramètres</h2>
+    <button type="button" class="btn btn-icon" id="modal-settings-close" aria-label="Fermer">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="field">
+      <label for="theme-select">Thème</label>
+      <select id="theme-select" class="theme-select" aria-label="Thème" style="max-width:none">
+        <option value="devinci">De Vinci</option>
+        <option value="clair">Clair</option>
+        <option value="sombre">Sombre</option>
+        <option value="ocean">Océan</option>
+        <option value="foret">Forêt</option>
+        <option value="montagnes">Montagnes</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Compte GitHub</label>
+      <button type="button" class="btn" id="btn-change-token">Changer le token…</button>
+      <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">Le token reste dans ce navigateur (localStorage) et ne transite que vers api.github.com.</p>
+    </div>
+    <p class="marginalia" style="margin:0; font-size:12.5px">Relevé automatique toutes les 2 min quand l'app est visible, et au retour sur l'onglet.</p>
+  </div>
 </dialog>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
