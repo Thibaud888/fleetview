@@ -40,7 +40,7 @@ const IDEA_CATS = {
 
 let model = null;          // { repos:[], ideas:[], attention:[], feed:[] }
 let fleetFile = null;      // { json, sha }
-let ui = { filter:"all", openRepo:null, lastSync:null, loading:false };
+let ui = { filter:"all", openRepo:null, lastSync:null, loading:false, threadBig:false };
 let ideaLaunchCtx = null;  // idée en cours de lancement (depuis le codex)
 let ideaUI = { repoFilter:"all", open:null, edit:null }; // état du codex (filtre projet, idée dépliée/éditée)
 const labelCache = new Set();
@@ -286,7 +286,12 @@ function demoModel(){
       {id:"quiz-capitales", type:"cron-node", life:"actif", state:"crit", last:"il y a 40 min", url:"#",
         lines:[L("crit","publish-shorts.yml — 2 échecs consécutifs","il y a 40 min",{id:"demo",label:"Relancer"}), L("ok","retry-reels.yml — OK","cette nuit")]},
       {id:"bulletins-viz", type:"static · kit 1.0.0", life:"actif", state:"info", last:"il y a 12 min", url:"#",
-        lines:[L("info","Issue #18 « Export PDF » — session Actions en cours","12 min")]},
+        lines:[L("info","Issue #18 « Export PDF » — session Actions en cours","12 min")],
+        threadIssue:{num:18, title:"Export PDF", cadrage:false, comments:[
+          {user:{login:OWNER}, body:"Ajouter un bouton pour exporter le bulletin courant en PDF."},
+          {user:{login:"claude-bot"}, body:"Spécification : bouton « Exporter en PDF » dans la barre du bulletin. Rendu client via l'API d'impression du navigateur (window.print) avec une feuille @media print dédiée — aucune dépendance. Critères : le PDF reprend le graphe et le tableau, sans la navigation. J'enchaîne l'implémentation."},
+          {user:{login:"claude-bot"}, body:"Fait : bouton ajouté, styles d'impression en place, PR #19 ouverte (Closes #18). Vérifié : l'aperçu d'impression montre le bulletin seul."},
+        ]}},
       {id:"talk-show-oral", type:"service-node", life:"actif", state:"warn", last:"hier", url:"#",
         pr:{num:15,title:"Lecture audio iOS",checks:"checks ✓ 3/3",files:4,add:118,del:22,body:"Débloque l'AudioContext au premier geste utilisateur. Résout l'issue #12."},
         lines:[L("warn","PR #15 « Lecture audio iOS » — checks ✓, attend ta décision","depuis 15 h",{id:"demo",label:"Examiner"})]},
@@ -322,7 +327,6 @@ function renderSummary(){
     {v:"var(--warn)", n:c("warn"), l:"en attente"},
     {v:"var(--mut)",  n:model.ideas.length, l:"idées au codex"},
   ].map(p=>`<span class="sum-chip"><span class="dot" style="--c:${p.v}"></span><b class="num">${p.n}</b>&nbsp;${p.l}</span>`).join("");
-  $("#tab-idees-n").textContent=model.ideas.length;
 }
 function renderAttention(){
   const a=model.attention;
@@ -338,17 +342,22 @@ function renderAttention(){
 }
 function renderFilters(){
   const R=model.repos;
-  const defs=[
+  const meta=[
     {id:"all",l:"Tous",n:R.filter(r=>r.life!=="archive").length},
     {id:"action",l:"En action",n:R.filter(r=>r.life==="actif"&&r.state!=="calm").length},
+  ];
+  const states=[
     {id:"crit",l:"À débloquer",n:R.filter(r=>r.state==="crit"&&r.life!=="archive").length},
     {id:"info",l:"En session",n:R.filter(r=>r.state==="info"&&r.life!=="archive").length},
     {id:"warn",l:"En attente",n:R.filter(r=>r.state==="warn"&&r.life!=="archive").length},
     {id:"calm",l:"Calmes",n:R.filter(r=>r.state==="calm"&&r.life==="actif").length},
     {id:"veille",l:"En veille",n:R.filter(r=>r.life==="veille").length},
   ];
-  $("#filters").innerHTML=defs.map(d=>
-    `<button class="chip" data-filter="${d.id}" aria-pressed="${ui.filter===d.id}">${d.l} <span class="n num">${d.n}</span></button>`).join("");
+  const chip=(d,cls)=>`<button class="chip ${cls}" data-filter="${d.id}" aria-pressed="${ui.filter===d.id}">${d.l} <span class="n num">${d.n}</span></button>`;
+  $("#filters").innerHTML=
+    meta.map(d=>chip(d,"chip-meta")).join("")+
+    `<span class="chip-sep" aria-hidden="true"></span>`+
+    states.map(d=>chip(d,"chip-state")).join("");
 }
 function lineHtml(l){
   return `<li><span class="ldot" style="--c:var(--${l.c})"></span>
@@ -456,7 +465,7 @@ function renderIdeas(){
     html+=`<div class="cat-head eyebrow">${head} · <span class="num">${group.length}</span></div>`+group.map(rowHtml).join("");
   }
   if(model.ideas.length&&!list.length) html+=`<p style="padding:12px 15px" class="marginalia">Aucune idée pour ce projet.</p>`;
-  $("#ideas").innerHTML=html||`<p style="padding:12px 15px" class="marginalia">Codex vide — note une idée ci-dessous.</p>`;
+  $("#ideas").innerHTML=html||`<p style="padding:12px 15px" class="marginalia">Codex vide — ajoute une idée avec le bouton ci-dessous.</p>`;
 }
 function renderFeed(){
   let html="", day=null;
@@ -496,17 +505,26 @@ function renderDetail(){
           <button class="btn" data-act="pr-comment-send" data-n="${r.pr.num}">Envoyer</button>
         </div>
         <label class="reply-opt"><input type="checkbox" id="pr-reply-cadrage" checked>
-          🪶 cadrer d'abord — Claude propose un plan en commentaire, tu réponds « GO » pour qu'il l'applique</label>
+          🪶 cadrer d'abord — Claude poste un court plan en commentaire puis l'applique dans la foulée</label>
       </div>
     </div>`:"";
 
   const th=r.threadIssue;
+  const msgs=th?(th.comments||[]):[];
+  const threadBar=msgs.length>1?`
+      <div class="thread-bar">
+        <span class="count num">${msgs.length} messages</span>
+        <button class="btn-mini" data-act="thread-top">↥ Début</button>
+        <button class="btn-mini" data-act="thread-bottom">↧ Dernier</button>
+        <button class="btn-mini${ui.threadBig?" on":""}" data-act="thread-big">${ui.threadBig?"➖ Réduire":"➕ Agrandir"}</button>
+      </div>`:"";
   const threadBlock=th?`
     <div class="block">
       <div class="block-head"><span class="eyebrow">Dialogue — issue #${th.num} « ${esc(th.title)} »</span></div>
-      <div class="thread">${(th.comments||[]).map(m=>{
+      ${threadBar}
+      <div class="thread${ui.threadBig?" big":""}" id="thread-box">${msgs.map((m,i)=>{
         const mine=m.user.login===OWNER;
-        return `<div class="msg ${mine?"":"claude"}"><span class="who">${mine?"Toi":"Claude"}</span>
+        return `<div class="msg ${mine?"":"claude"}"><span class="who">${mine?"Toi":"Claude"} <span class="msg-n">${i+1}</span></span>
           <span class="bubble">${esc(String(m.body||"").replace(/^@claude\s*/i,""))}</span></div>`;
       }).join("")||`<p class="marginalia" style="margin:0">Pas encore de commentaire — la session écrit ici.</p>`}
       </div>
@@ -515,9 +533,6 @@ function renderDetail(){
         <button type="button" class="btn btn-mic" data-mic="#thread-reply" title="Dicter">🎙️</button>
         <button class="btn" data-act="thread-send" data-n="${th.num}">Envoyer</button>
       </div>
-      ${th.cadrage?`<div class="block-actions" style="margin-top:8px">
-        <button class="btn btn-primary" data-act="go" data-n="${th.num}">✓ GO — spécification validée, implémente</button>
-      </div>`:""}
     </div>`:"";
 
   $("#view-detail").innerHTML=`
@@ -556,13 +571,6 @@ function renderDetail(){
       </div>
     </div>`;
 }
-function fillQuickRepo(){
-  const sel=$("#quick-repo"); if(!sel||!model) return;
-  const cur=sel.value;
-  sel.innerHTML=`<option value="flotte">flotte</option>`+
-    model.repos.filter(r=>r.life!=="archive").map(r=>`<option value="${esc(r.id)}">${esc(r.id)}</option>`).join("");
-  if(cur&&[...sel.options].some(o=>o.value===cur)) sel.value=cur;
-}
 function renderSyncNote(){
   const el=$("#sync-note");
   if(ui.loading){ el.textContent="relevé en cours…"; return; }
@@ -571,7 +579,7 @@ function renderSyncNote(){
 function renderAll(){
   if(!model) return;
   renderSummary(); renderAttention(); renderFilters(); renderGrid();
-  renderArchived(); renderIdeas(); renderFeed(); renderDetail(); fillQuickRepo(); renderSyncNote();
+  renderArchived(); renderIdeas(); renderFeed(); renderDetail(); renderSyncNote();
 }
 
 /* ================= Actions (écritures API) ================= */
@@ -598,14 +606,15 @@ Règles de la flotte :
 _Créée depuis FleetView._`;
 }
 function cadrageBody(title,desc){
-  return `**PHASE 1 — CADRAGE (ne code pas, n'ouvre pas de PR dans cette phase)**
-Reformule la demande ci-dessous en spécification : contexte, objectif, critères de done vérifiables, étapes.
-Poste cette spécification en COMMENTAIRE de cette issue, avec tes questions numérotées s'il y en a. Puis attends.
+  return `Reformule d'abord la demande ci-dessous en une courte spécification (contexte, objectif,
+critères de done vérifiables, étapes) et poste-la en COMMENTAIRE de cette issue.
 
-**PHASE 2 — IMPLÉMENTATION**
-Uniquement après un commentaire de ${OWNER} contenant « GO » : traite la spécification validée —
-branche \`claude/issue-<n>\`, vérification (script verify du repo, sinon build + tests), PR en
-français avec \`Closes #<n>\`, BACKLOG.md mis à jour.
+Puis **enchaîne directement l'implémentation** sans attendre de validation : branche
+\`claude/issue-<n>\`, vérification (script verify du repo, sinon build + tests), PR en français
+avec \`Closes #<n>\`, BACKLOG.md mis à jour.
+
+N'attends une réponse de ${OWNER} QUE si un point réellement bloquant t'empêche d'avancer :
+dans ce cas, pose tes questions numérotées en commentaire et attends. Sinon, va au bout.
 
 **Demande brute :**
 ${desc||title}
@@ -664,12 +673,11 @@ async function closeIdea(num, launchedUrl){
     await gh(`/repos/${OWNER}/${META}/issues/${num}`,{method:"PATCH",body:{state:"closed"}});
   }catch(e){}
 }
-// Habille une demande de changements du protocole cadrage (plan proposé en commentaire, GO pour appliquer).
+// Habille une demande de changements : plan posté en commentaire puis appliqué dans la foulée.
 function changesCadrage(text){
-  return `**PHASE 1 — CADRAGE (ne code pas encore)**
-Reformule cette demande de changements en plan d'action concret (fichiers touchés, étapes, critères vérifiables) et poste-le en COMMENTAIRE de cette PR, avec tes questions numérotées s'il y en a. Puis attends.
+  return `Reformule cette demande de changements en un court plan d'action (fichiers touchés, étapes, critères vérifiables) et poste-le en COMMENTAIRE de cette PR, puis **applique-le directement** sur cette branche — sans attendre de validation.
 
-**PHASE 2** — uniquement après un commentaire de ${OWNER} contenant « GO » : applique le plan validé sur cette branche.
+N'attends une réponse de ${OWNER} QUE si un point réellement bloquant t'en empêche : dans ce cas, pose tes questions numérotées en commentaire et attends. Sinon, va au bout.
 
 **Demande brute :**
 ${text}`;
@@ -786,6 +794,7 @@ function showConfig(show){
   $("#view-app").hidden=show;
   $("#bottombar").hidden=show;
   $("#btn-new").hidden=show;
+  $("#btn-newidea").hidden=show;
   $("#btn-newproject").hidden=show;
 }
 
@@ -801,7 +810,10 @@ function openModal(opts){
   if(opts.repo) sel.value=opts.repo;
   $("#f-title").value=opts.title||"";
   $("#f-desc").value=opts.desc||"";
-  $("#modal-title").textContent=opts.title?"Lancer cette idée":"Nouvelle demande";
+  // Parcours de départ : "box" pour une idée, sinon cadrage (défaut du formulaire).
+  const parcours=opts.parcours||"cadrage";
+  const rp=document.querySelector(`input[name="f-when"][value="${parcours}"]`); if(rp) rp.checked=true;
+  $("#modal-title").textContent=opts.title?"Lancer cette idée":(parcours==="box"?"Nouvelle idée":"Nouvelle demande");
   $("#opt-box").style.display=opts.hideBox?"none":"";
   $("#modal-note").textContent=demo?"Mode démo : aucune action réelle.":"";
   if(!opts.title) ideaLaunchCtx=null;
@@ -861,8 +873,9 @@ document.addEventListener("click",async(e)=>{
             b.disabled=true; await sendComment(r.id,n,cadre?changesCadrage(v):v); await refresh(); } break;
           case "thread-send": if(r){ const v=$("#thread-reply").value.trim(); if(!v)break;
             b.disabled=true; await sendComment(r.id,n,v); await refresh(); } break;
-          case "go": if(r){ b.disabled=true;
-            await sendComment(r.id,n,"GO — spécification validée, lance l'implémentation (phase 2)."); await refresh(); } break;
+          case "thread-big": ui.threadBig=!ui.threadBig; renderDetail(); break;
+          case "thread-top": { const m=document.querySelector("#thread-box .msg"); if(m) m.scrollIntoView({behavior:"smooth",block:"nearest"}); } break;
+          case "thread-bottom": { const ms=document.querySelectorAll("#thread-box .msg"); if(ms.length) ms[ms.length-1].scrollIntoView({behavior:"smooth",block:"nearest"}); } break;
           case "rerun": { const repoId=r?r.id:(e.target.closest(".card")||{}).dataset?.card;
             if(repoId){ b.disabled=true; await rerunRun(repoId,n); await refresh(); } } break;
           case "relabel": if(r){ b.disabled=true;
@@ -897,6 +910,8 @@ $("#form-new").addEventListener("submit",async(e)=>{
 });
 document.querySelectorAll('input[name="f-when"]').forEach(x=>x.addEventListener("change",syncWhen));
 $("#btn-new").addEventListener("click",()=>openModal());
+// « Idée » (topbar + panneau codex) : même modale, parcours « Codex » présélectionné.
+document.querySelectorAll(".act-newidea").forEach(b=>b.addEventListener("click",()=>openModal({parcours:"box"})));
 $("#modal-close").addEventListener("click",()=>modal.close());
 $("#btn-newproject").addEventListener("click",()=>modalProjet.showModal());
 $("#link-newproject").addEventListener("click",(e)=>{e.preventDefault();modal.close();modalProjet.showModal();});
@@ -941,32 +956,36 @@ $("#ideas").addEventListener("keydown",(e)=>{
   if(t&&(e.key==="Enter"||e.key===" ")){ e.preventDefault(); t.click(); }
 });
 
-$("#quick-add").addEventListener("click",async()=>{
-  const v=$("#quick-input").value.trim(); if(!v) return;
-  const repo=$("#quick-repo").value||"flotte";
-  try{
-    await createRequest({repo,title:v,desc:"",mode:"box",modelChoice:"sonnet",prio:"P3"});
-    $("#quick-input").value="";
-    await refresh(false);
-  }catch(err){ toast("Échec : "+err.message); }
-});
-$("#quick-input").addEventListener("keydown",(e)=>{ if(e.key==="Enter"){ e.preventDefault(); $("#quick-add").click(); } });
-
 /* ================= Dictée vocale (générique : tout bouton [data-mic]) =================
    data-mic="#selecteur" cible le champ à remplir ; data-mic-interim="#sel" (optionnel)
    affiche le texte provisoire. Le texte final s'AJOUTE au contenu, sans l'écraser. */
 (function initMic(){
   const Ctor=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!Ctor){ document.documentElement.classList.add("no-mic"); return; } // API absente : boutons masqués en CSS
-  let rec=null, activeBtn=null;
+  let rec=null, activeBtn=null, micGranted=false;
   function stopRec(){ if(rec){ try{ rec.stop(); }catch(e){} } }
-  document.addEventListener("click",(e)=>{
+  // Déclenche l'invite de permission micro d'Android et enregistre le site dans les
+  // autorisations (la Web Speech API seule ne l'y fait pas toujours apparaître).
+  async function ensureMic(){
+    if(micGranted) return true;
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia) return true; // pas de garantie : on tente quand même
+    try{
+      const s=await navigator.mediaDevices.getUserMedia({audio:true});
+      s.getTracks().forEach(t=>t.stop()); // on ne voulait que la permission
+      micGranted=true; return true;
+    }catch(err){
+      toast("Micro bloqué. Android : Paramètres → Applications → Chrome (ou FleetView) → Autorisations → Microphone. Sinon, le micro du clavier marche dans n'importe quel champ.", 8000);
+      return false;
+    }
+  }
+  document.addEventListener("click",async(e)=>{
     const btn=e.target.closest("[data-mic]");
     if(!btn) return;
     if(activeBtn===btn){ stopRec(); return; } // second appui : arrêt
     stopRec();
     const target=document.querySelector(btn.dataset.mic);
     if(!target) return;
+    if(!(await ensureMic())) return;
     const interimEl=btn.dataset.micInterim?document.querySelector(btn.dataset.micInterim):null;
     let base=target.value;
     const r=new Ctor();
@@ -992,9 +1011,10 @@ $("#quick-input").addEventListener("keydown",(e)=>{ if(e.key==="Enter"){ e.preve
     });
     r.addEventListener("error",(ev)=>{
       if(ev.error==="not-allowed"||ev.error==="service-not-allowed"){
-        toast("Micro refusé : autorise le micro pour ce site (cadenas ou ⋮ dans la barre d'adresse → Autorisations).", 6000);
+        micGranted=false;
+        toast("Micro bloqué. Android : Paramètres → Applications → Chrome (ou FleetView) → Autorisations → Microphone. Sinon, le micro du clavier marche dans n'importe quel champ.", 8000);
       } else if(ev.error!=="no-speech" && ev.error!=="aborted"){
-        toast("Dictée vocale indisponible pour le moment.");
+        toast("Dictée vocale indisponible pour le moment (elle passe par un service Google, parfois capricieux). Le micro du clavier reste une alternative.", 7000);
       }
     });
     try{ r.start(); rec=r; activeBtn=btn; btn.classList.add("on"); }
