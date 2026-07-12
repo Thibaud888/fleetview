@@ -14,6 +14,9 @@ const store = {
   set token(v){ try{ v?localStorage.setItem("fv-token",v):localStorage.removeItem("fv-token"); }catch(e){} },
   get theme(){ try{ return localStorage.getItem("fv-theme")||"devinci"; }catch(e){ return "devinci"; } },
   set theme(v){ try{ localStorage.setItem("fv-theme",v); }catch(e){} },
+  // Dernier relevé, pour l'affichage hors-ligne (jamais de token ici : que le modèle normalisé).
+  get snapshot(){ try{ const s=localStorage.getItem("fv-snapshot"); return s?JSON.parse(s):null; }catch(e){ return null; } },
+  set snapshot(v){ try{ v?localStorage.setItem("fv-snapshot",JSON.stringify(v)):localStorage.removeItem("fv-snapshot"); }catch(e){} },
 };
 let demo = false;
 
@@ -144,6 +147,7 @@ async function loadAll(){
 
   model = buildModel(fleet, {claudeIssues, openPRs, ideasRaw:ideasRes, runsByRepo, prDetails, commentsByIssue});
   ui.lastSync = new Date();
+  store.snapshot = { at: ui.lastSync.toISOString(), model }; // conserve le relevé pour le hors-ligne
 }
 
 function isArchived(statut){ return ["archivé","archive","gelé"].includes(String(statut||"").toLowerCase()); }
@@ -631,6 +635,21 @@ async function newProject(name,type,priv){
 }
 
 /* ================= Rafraîchissement ================= */
+function offlineBanner(atISO){
+  banner("Hors ligne — dernier relevé "+(atISO?timeAgo(atISO):"inconnu")+". Reconnecte-toi pour rafraîchir.", "info");
+}
+// Bascule en affichage hors-ligne : garde le modèle courant s'il existe, sinon relit le dernier
+// relevé en cache. Retourne true si quelque chose est affichable.
+function hydrateFromSnapshot(){
+  if(model){ offlineBanner(ui.lastSync?ui.lastSync.toISOString():null); return true; }
+  const snap=store.snapshot;
+  if(snap&&snap.model){
+    model=snap.model; ui.lastSync=snap.at?new Date(snap.at):null;
+    renderAll(); offlineBanner(snap.at); return true;
+  }
+  return false;
+}
+
 async function refresh(showErrors=true){
   if(ui.loading) return;
   ui.loading=true; renderSyncNote();
@@ -642,6 +661,11 @@ async function refresh(showErrors=true){
     if(e.status===401||e.status===403){
       banner("Token refusé par GitHub ("+e.status+"). Vérifie ses permissions ou recolle-le.", "");
       showConfig(true);
+    } else if(!e.status){
+      // Pas de code HTTP → erreur réseau : on bascule hors-ligne sur le dernier relevé.
+      if(!hydrateFromSnapshot() && showErrors){
+        banner("Hors ligne — aucun relevé en cache pour l'instant. Reconnecte-toi.", "info");
+      }
     } else if(showErrors){
       banner("Relevé impossible : "+e.message+" — nouvel essai au prochain cycle.");
     }
@@ -860,6 +884,13 @@ themeSel.addEventListener("change",()=>{
 
 /* ================= Init ================= */
 document.body.dataset.tab="flotte";
+// Service worker : rend la coquille disponible hors-ligne (chemin relatif → scope /fleetview/).
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>{ navigator.serviceWorker.register("sw.js").catch(()=>{}); });
+}
+// Retour/perte de réseau : rafraîchir dès le retour, signaler la coupure sinon.
+window.addEventListener("online",()=>{ if(!demo&&store.token) refresh(false); });
+window.addEventListener("offline",()=>{ if(model) offlineBanner(ui.lastSync?ui.lastSync.toISOString():null); });
 setInterval(()=>{ if(document.visibilityState==="visible"&&!demo&&store.token) refresh(false); }, REFRESH_MS);
 setInterval(renderSyncNote, 30_000);
 document.addEventListener("visibilitychange",()=>{
