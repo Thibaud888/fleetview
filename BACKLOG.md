@@ -9,4 +9,5 @@
 - [ ] Secrets automatiques au bootstrap « Nouveau projet » — poser CLAUDE_CODE_OAUTH_TOKEN via l'API (libsodium) ou documenter le geste manuel ; DoD : un projet créé depuis FleetView peut lancer sa première session sans passage par un terminal.
 - [ ] Compteur de quota API GitHub dans le pied de page — DoD : requêtes restantes visibles, alerte sous 500.
 - [ ] Notifications ntfy cliquables vers la vue projet — DoD : le lien d'une notif ouvre FleetView sur le bon repo.
+- [ ] Passage du repo en public — historique vérifié (aucun secret), URL Pages documentée dans le README ([PR #6](https://github.com/Thibaud888/fleetview/pull/6)) ; reste le geste manuel : Settings → Change visibility → Make public.
 - [x] Workflow Pages en pause tant que le repo est privé (garde `if` dans le stub, réactivation automatique au passage en public) — [PR #5](https://github.com/Thibaud888/fleetview/pull/5).
