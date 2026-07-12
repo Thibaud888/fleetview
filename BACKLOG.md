@@ -3,7 +3,7 @@
 > 1 item = 1 session Claude (issue labellisée `claude` ou session Cloud) = 1 PR.
 > Cocher + lien PR quand c'est mergé. `/dispatch` (claude-ops) lit ce fichier.
 
-- [ ] Service worker + cache hors-ligne — l'app s'ouvre sans réseau avec le dernier relevé ; DoD : coupure réseau → l'UI s'affiche avec données en cache et bandeau « hors ligne ».
+- [x] Service worker + cache hors-ligne — `sw.js` pré-cache la coquille (stale-while-revalidate), le dernier relevé est persisté et réaffiché avec un bandeau « hors ligne » ; l'API GitHub n'est jamais mise en cache (issue #8).
 - [x] Icônes PWA PNG maskable (192/512) + apple-touch — installation propre sur Android : l'icône vitruvienne s'affiche masquée, pas une capture ; générées depuis `icon.svg` par `scripts/icons.mjs` (issue #7).
 - [ ] Journal de run en direct dans la vue projet — bouton « Suivre » affiche les logs du run Actions ; DoD : logs visibles et rafraîchis pendant un run réel.
 - [ ] Secrets automatiques au bootstrap « Nouveau projet » — poser CLAUDE_CODE_OAUTH_TOKEN via l'API (libsodium) ou documenter le geste manuel ; DoD : un projet créé depuis FleetView peut lancer sa première session sans passage par un terminal.
