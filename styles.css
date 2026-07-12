@@ -143,6 +143,8 @@ code{font-family:var(--font-mono); font-size:.82em; background:var(--surface-2);
 .sum-chip b{font-weight:600}
 .topbar-actions{margin-left:auto; display:flex; gap:8px; align-items:center}
 .refresh-note{font-family:var(--font-mono); font-size:11px; color:var(--mut); white-space:nowrap}
+.refresh-note.low{color:var(--crit); font-weight:600}
+.settings-row{display:flex; gap:8px; flex-wrap:wrap; margin-top:6px}
 .dot{width:8px; height:8px; border-radius:99px; background:var(--c,var(--mut)); flex:none}
 
 /* Boutons */
@@ -297,6 +299,25 @@ code{font-family:var(--font-mono); font-size:.82em; background:var(--surface-2);
 .reply textarea{flex:1; border:1px solid var(--line-strong); border-radius:var(--r-sm); background:var(--surface); color:var(--ink); padding:8px 11px; font-family:var(--font-sans); font-size:13.5px; resize:vertical; min-height:44px}
 .detail-actions{display:flex; gap:9px; flex-wrap:wrap; margin-top:18px; padding-top:14px; border-top:1px solid var(--line)}
 .detail-actions .ghlink{margin-left:auto; font-family:var(--font-mono); font-size:11.5px; align-self:center}
+
+/* Secret Claude (bootstrap sans terminal) */
+.kit-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 14px; padding:8px 12px; border:1px dashed var(--line-strong); border-radius:var(--r-sm); background:var(--surface-2)}
+.secret-badge{font-family:var(--font-mono); font-size:12px; color:var(--mut); flex:1; min-width:90px}
+
+/* Journal de run en direct */
+.run-state{font-size:11px; white-space:nowrap}
+.run-title{font-size:12.5px; margin:-4px 0 9px}
+.journal{display:flex; flex-direction:column; gap:9px; margin:2px 0 11px}
+.job{border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface); padding:9px 11px}
+.job-head{display:flex; align-items:center; gap:8px; margin-bottom:6px}
+.job-head .dot{width:8px; height:8px}
+.job-name{font-family:var(--font-mono); font-size:12.5px; font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.job-state{font-size:11px; white-space:nowrap; max-width:52%; overflow:hidden; text-overflow:ellipsis}
+.steps{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:3px}
+.steps li{display:flex; align-items:baseline; gap:8px; font-family:var(--font-sans); font-size:12.5px; color:var(--ink-soft)}
+.steps li.on{color:var(--ink); font-weight:500}
+.steps li.on .sn::after{content:" …"; color:var(--mut)}
+.steps .si{font-family:var(--font-mono); font-size:11px; flex:none; width:12px; text-align:center}
 .sub-list{margin-top:16px}
 .sub-list .eyebrow{margin-bottom:8px}
 .sub-row{display:flex; align-items:center; gap:10px; padding:7px 0; border-top:1px solid var(--line); font-family:var(--font-sans); font-size:13.5px}

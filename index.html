@@ -33,6 +33,7 @@
     <div class="sum" id="summary" aria-label="Synthèse de la flotte"></div>
     <div class="topbar-actions">
       <span class="refresh-note num" id="sync-note"></span>
+      <span class="refresh-note num" id="rate-note" title="Quota API GitHub" hidden></span>
       <button class="btn btn-icon" id="btn-refresh" title="Rafraîchir maintenant">⟳</button>
       <button class="btn btn-secondary-desktop" id="btn-newproject" hidden>⚒ Nouveau projet</button>
       <button class="btn act-newidea" id="btn-newidea" hidden>💡 Idée</button>
@@ -241,9 +242,28 @@
       </select>
     </div>
     <div class="field">
+      <label for="ntfy-input">🔔 Notifications (ntfy)</label>
+      <input id="ntfy-input" type="text" inputmode="url" placeholder="https://ntfy.sh/mon-sujet-secret" autocomplete="off" aria-label="URL du sujet ntfy">
+      <div class="settings-row">
+        <button type="button" class="btn" id="ntfy-save">Enregistrer</button>
+        <button type="button" class="btn" id="ntfy-test">Tester</button>
+        <button type="button" class="btn" id="ntfy-clear">Désactiver</button>
+      </div>
+      <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
+        Installe l'app <b>ntfy</b> et abonne-toi à un sujet secret. Push <b>uniquement</b> quand Claude te pose une
+        question ou qu'une PR est prête ; le lien ouvre FleetView sur le bon projet. L'URL reste dans ce navigateur ;
+        la détection tourne tant que FleetView est ouvert (ou en onglet d'arrière-plan).
+      </p>
+    </div>
+    <div class="field">
       <label>Compte GitHub</label>
       <button type="button" class="btn" id="btn-change-token">Changer le token…</button>
       <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">Le token reste dans ce navigateur (localStorage) et ne transite que vers api.github.com.</p>
+    </div>
+    <div class="field">
+      <label>📊 Quota API GitHub</label>
+      <p class="marginalia num" id="rate-settings" style="margin:0; font-size:13px">—</p>
+      <p class="marginalia" style="margin:4px 0 0; font-size:12px">Alerte automatique sous 500 requêtes restantes.</p>
     </div>
     <p class="marginalia" style="margin:0; font-size:12.5px">Relevé automatique toutes les 2 min quand l'app est visible, et au retour sur l'onglet.</p>
   </div>
