@@ -14,6 +14,9 @@ const store = {
   set token(v){ try{ v?localStorage.setItem("fv-token",v):localStorage.removeItem("fv-token"); }catch(e){} },
   get theme(){ try{ return localStorage.getItem("fv-theme")||"devinci"; }catch(e){ return "devinci"; } },
   set theme(v){ try{ localStorage.setItem("fv-theme",v); }catch(e){} },
+  // Sujet ntfy pour les notifications push (URL secrète : reste en localStorage, jamais commitée).
+  get ntfy(){ try{ return localStorage.getItem("fv-ntfy")||""; }catch(e){ return ""; } },
+  set ntfy(v){ try{ v?localStorage.setItem("fv-ntfy",v):localStorage.removeItem("fv-ntfy"); }catch(e){} },
   // Dernier relevé, pour l'affichage hors-ligne (jamais de token ici : que le modèle normalisé).
   get snapshot(){ try{ const s=localStorage.getItem("fv-snapshot"); return s?JSON.parse(s):null; }catch(e){ return null; } },
   set snapshot(v){ try{ v?localStorage.setItem("fv-snapshot",JSON.stringify(v)):localStorage.removeItem("fv-snapshot"); }catch(e){} },
@@ -38,12 +41,17 @@ const IDEA_CATS = {
   exploration:{e:"🔬", l:"Exploration",    color:"4F6B2C"},
 };
 
-let model = null;          // { repos:[], ideas:[], attention:[], feed:[] }
+let model = null;          // { repos:[], ideas:[], attention:[], feed:[], notify:[] }
 let fleetFile = null;      // { json, sha }
 let ui = { filter:"all", openRepo:null, lastSync:null, loading:false, threadBig:false };
 let ideaLaunchCtx = null;  // idée en cours de lancement (depuis le codex)
 let ideaUI = { repoFilter:"all", open:null, edit:null }; // état du codex (filtre projet, idée dépliée/éditée)
 const labelCache = new Set();
+let rateInfo = { remaining:null, limit:null, reset:null }; // quota API GitHub (en-têtes x-ratelimit-*)
+let rateWarned = false;    // pour ne toaster l'alerte « quota bas » qu'une fois par fenêtre
+let pendingOpen = null;    // repo à ouvrir au chargement (deep-link ntfy ?repo=…)
+let runWatch = null;       // suivi live d'un run Actions : {repo, runId, box, timer, lastJobs, demoJobs}
+const secretCache = new Map(); // repo → "present" | "absent" | "unknown" (secret Claude)
 
 /* ================= Utilitaires ================= */
 const $ = (s)=>document.querySelector(s);
@@ -68,6 +76,13 @@ function dayLabel(iso){
   return d.toLocaleDateString("fr-FR",{day:"numeric",month:"short"});
 }
 function hhmm(iso){ const d=new Date(iso); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
+function timeUntil(ms){
+  if(!ms) return "";
+  const d=(ms-Date.now())/1000;
+  if(d<=0) return "imminente";
+  if(d<3600) return `dans ${Math.round(d/60)} min`;
+  return `dans ${Math.round(d/3600)} h`;
+}
 let toastTimer=null;
 function toast(msg, ms){
   const t=$("#toast"); t.textContent=msg; t.classList.add("on");
@@ -91,6 +106,7 @@ async function gh(path, opts={}){
     },
     body: opts.body?JSON.stringify(opts.body):undefined,
   });
+  captureRate(res);
   if(res.status===401||res.status===403){
     const e=new Error("auth"); e.status=res.status; e.detail=await res.text().catch(()=> ""); throw e;
   }
@@ -100,6 +116,36 @@ async function gh(path, opts={}){
   return res.status===204?null:res.json();
 }
 const enc = encodeURIComponent;
+
+// Quota API : lit les en-têtes x-ratelimit-* de chaque réponse, alerte sous 500.
+function captureRate(res){
+  const rem=res.headers.get("x-ratelimit-remaining");
+  if(rem===null) return;
+  rateInfo={ remaining:Number(rem),
+    limit:Number(res.headers.get("x-ratelimit-limit")||0),
+    reset:Number(res.headers.get("x-ratelimit-reset")||0)*1000 };
+  if(rateInfo.remaining<500 && !rateWarned){
+    rateWarned=true;
+    toast(`⚠️ Quota API GitHub bas : ${rateInfo.remaining} requêtes restantes (réinit. ${timeUntil(rateInfo.reset)}).`, 7000);
+  }
+  if(rateInfo.remaining>=500) rateWarned=false;
+  renderRate();
+}
+function renderRate(){
+  const el=$("#rate-note");
+  if(el){
+    if(rateInfo.remaining===null){ el.hidden=true; }
+    else{
+      el.hidden=false;
+      el.textContent=`API ${rateInfo.remaining}`;
+      el.classList.toggle("low", rateInfo.remaining<500);
+      el.title=`Requêtes API GitHub : ${rateInfo.remaining}/${rateInfo.limit||"?"} · réinit. ${timeUntil(rateInfo.reset)}`;
+    }
+  }
+  const s=$("#rate-settings");
+  if(s) s.textContent = rateInfo.remaining===null ? "—"
+    : `${rateInfo.remaining} / ${rateInfo.limit||"?"} restantes · réinit. ${timeUntil(rateInfo.reset)}`;
+}
 
 /* ================= Chargement & modèle ================= */
 async function loadAll(){
@@ -164,7 +210,7 @@ function isArchived(statut){ return ["archivé","archive","gelé"].includes(Stri
 function isVeille(statut){ return String(statut||"").toLowerCase()==="veille"; }
 
 function buildModel(fleet, D){
-  const repos=[], attention=[], feed=[];
+  const repos=[], attention=[], feed=[], notify=[];
 
   for(const fr of fleet){
     const id=fr.repo;
@@ -188,6 +234,8 @@ function buildModel(fleet, D){
         bump("warn");
         lines.push({c:"warn", t:`Cadrage #${is.number} « ${is.title} » — réponse de Claude à lire`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
         attention.push({c:"warn", repo:id, t:`Claude attend ta réponse sur « ${is.title} »`, small:timeAgo(lastC.created_at)});
+        notify.push({key:`q:${id}#${is.number}:${lastC.id||lastC.created_at}`, kind:"q",
+          title:`${id} — Claude attend ta réponse`, msg:is.title, repo:id, tag:"speech_balloon", prio:4});
         threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:true};
       } else if(linkedPR){
         // la PR parle pour elle (traitée plus bas)
@@ -225,6 +273,8 @@ function buildModel(fleet, D){
         bump("warn");
         lines.push({c:"warn", t:`PR #${p.number} « ${p.title} » — ${chTxt}, attend ta décision`, small:timeAgo(p.created_at), act:{id:"open-pr", n:p.number, label:"Examiner"}});
         attention.push({c:"warn", repo:id, t:`PR #${p.number} « ${p.title} » attend ta décision`, small:timeAgo(p.created_at)});
+        notify.push({key:`pr:${id}#${p.number}`, kind:"pr",
+          title:`${id} — PR #${p.number} prête à merger`, msg:p.title, repo:id, tag:"white_check_mark", prio:4});
       }
       if(!pr && det){ pr={num:p.number, title:p.title, body:(det.d.body||"").slice(0,600), checks:chTxt,
         files:det.d.changed_files, add:det.d.additions, del:det.d.deletions, mergeable:det.d.mergeable_state}; }
@@ -253,10 +303,23 @@ function buildModel(fleet, D){
       }
     }
 
+    // Dernier run Actions : proposé au journal live s'il tourne, ou s'il vient de finir (< 30 min).
+    let lastRun=null;
+    if(runs.length){
+      const rr=runs[0];
+      const running=["in_progress","queued","requested","waiting","pending"].includes(rr.status);
+      const ageMin=(Date.now()-new Date(rr.run_started_at||rr.created_at))/60000;
+      if(running || ageMin<30){
+        lastRun={ id:rr.id, name:rr.display_title||rr.name||"run", wf:rr.name||"",
+          status:rr.status, conclusion:rr.conclusion, running,
+          url:rr.html_url, started:rr.run_started_at||rr.created_at };
+      }
+    }
+
     if(!lines.length) lines.push({c:"ok", t:"Rien en cours"});
     repos.push({
       id, type: fr.type + (fr.kit_version?` · kit ${fr.kit_version}`:""), life, state,
-      lines, last: lastTs?timeAgo(lastTs):"—", lastTs, pr, threadIssue,
+      lines, last: lastTs?timeAgo(lastTs):"—", lastTs, pr, threadIssue, lastRun,
       notes: fr.notes||"", url:`https://github.com/${OWNER}/${id}`,
     });
   }
@@ -274,7 +337,7 @@ function buildModel(fleet, D){
   });
 
   feed.sort((a,b)=>b.ts<a.ts?-1:1);
-  return { repos, ideas, attention, feed: feed.slice(0,16) };
+  return { repos, ideas, attention, feed: feed.slice(0,16), notify };
 }
 
 /* ================= Mode démo ================= */
@@ -287,6 +350,15 @@ function demoModel(){
         lines:[L("crit","publish-shorts.yml — 2 échecs consécutifs","il y a 40 min",{id:"demo",label:"Relancer"}), L("ok","retry-reels.yml — OK","cette nuit")]},
       {id:"bulletins-viz", type:"static · kit 1.0.0", life:"actif", state:"info", last:"il y a 12 min", url:"#",
         lines:[L("info","Issue #18 « Export PDF » — session Actions en cours","12 min")],
+        lastRun:{id:1, name:"Export PDF — session #18", wf:"claude.yml", status:"in_progress",
+          conclusion:null, running:true, url:"#", started:new Date(Date.now()-4*60000).toISOString()},
+        demoJobs:[{name:"claude", status:"in_progress", conclusion:null, steps:[
+          {number:1,name:"Set up job",status:"completed",conclusion:"success"},
+          {number:2,name:"Checkout du dépôt",status:"completed",conclusion:"success"},
+          {number:3,name:"Lecture de MAP.md et CLAUDE.md",status:"completed",conclusion:"success"},
+          {number:4,name:"Session Claude Code (implémentation)",status:"in_progress",conclusion:null},
+          {number:5,name:"Vérification (verify.mjs)",status:"queued",conclusion:null},
+          {number:6,name:"Ouverture de la PR",status:"queued",conclusion:null}]}],
         threadIssue:{num:18, title:"Export PDF", cadrage:false, comments:[
           {user:{login:OWNER}, body:"Ajouter un bouton pour exporter le bulletin courant en PDF."},
           {user:{login:"claude-bot"}, body:"Spécification : bouton « Exporter en PDF » dans la barre du bulletin. Rendu client via l'API d'impression du navigateur (window.print) avec une feuille @media print dédiée — aucune dépendance. Critères : le PDF reprend le graphe et le tableau, sans la navigation. J'enchaîne l'implémentation."},
@@ -477,11 +549,96 @@ function renderFeed(){
   }
   $("#feed").innerHTML=html?(html+"</ul>"):`<p style="padding:12px 15px" class="marginalia">Rien à signaler.</p>`;
 }
+/* ===== Journal de run en direct (feature : suivre une session Claude) ===== */
+function runStatusLabel(run){
+  if(run.running) return {t:"en cours…", c:"info"};
+  if(run.conclusion==="success") return {t:"terminé ✓", c:"ok"};
+  if(["failure","timed_out"].includes(run.conclusion)) return {t:"en échec", c:"crit"};
+  if(run.conclusion==="cancelled") return {t:"annulé", c:"mut"};
+  return {t:run.status||"—", c:"mut"};
+}
+function stepIcon(s){
+  if(s.status!=="completed") return s.status==="in_progress"?"◍":"○";
+  return {success:"●", failure:"✕", cancelled:"–", skipped:"–"}[s.conclusion]||"●";
+}
+function stepColor(s){
+  if(s.status!=="completed") return s.status==="in_progress"?"var(--info)":"var(--mut)";
+  return {success:"var(--ok)", failure:"var(--crit)", cancelled:"var(--mut)", skipped:"var(--mut)"}[s.conclusion]||"var(--ok)";
+}
+function renderJournalInto(box, jobs){
+  if(!box) return;
+  if(!jobs || !jobs.length){ box.innerHTML=`<p class="marginalia" style="margin:0">Pas encore de détail — le run démarre…</p>`; return; }
+  box.innerHTML=jobs.map(j=>{
+    const js=runStatusLabel({running:j.status!=="completed", conclusion:j.conclusion, status:j.status});
+    const steps=(j.steps||[]).slice().sort((a,b)=>(a.number||0)-(b.number||0));
+    const cur=steps.find(s=>s.status==="in_progress");
+    const col=js.c==="mut"?"var(--mut)":`var(--${js.c})`;
+    return `<div class="job">
+      <div class="job-head"><span class="dot" style="--c:${stepColor({status:j.status,conclusion:j.conclusion})}"></span>
+        <span class="job-name">${esc(j.name)}</span>
+        <span class="job-state num" style="color:${col}">${js.t}${cur?` · ${esc(cur.name)}`:""}</span></div>
+      <ul class="steps">${steps.map(s=>`<li${s.status==="in_progress"?' class="on"':""}>
+        <span class="si" style="color:${stepColor(s)}">${stepIcon(s)}</span>
+        <span class="sn">${esc(s.name)}</span></li>`).join("")||`<li class="marginalia">étapes à venir…</li>`}</ul>
+    </div>`;
+  }).join("");
+}
+async function tickJournal(){
+  if(!runWatch) return;
+  let jobs=null;
+  if(demo){ jobs=runWatch.demoJobs||[]; }
+  else{
+    try{ jobs=(await gh(`/repos/${OWNER}/${runWatch.repo}/actions/runs/${runWatch.runId}/jobs?per_page=30`)).jobs||[]; }
+    catch(e){ return; } // erreur ponctuelle : on retentera au tick suivant
+  }
+  runWatch.lastJobs=jobs;
+  renderJournalInto(runWatch.box, jobs);
+  const active=jobs.some(j=>j.status!=="completed");
+  if(!active) stopJournal(false); // run fini : on garde l'état final affiché, on arrête le poll
+}
+function startJournal(repo, runId, box, demoJobs){
+  stopJournal(false);
+  runWatch={ repo, runId, box, timer:null, lastJobs:null, demoJobs:demoJobs||null };
+  tickJournal();
+  if(!demo) runWatch.timer=setInterval(tickJournal, 4500);
+}
+function stopJournal(clearVar=true){
+  if(runWatch && runWatch.timer){ clearInterval(runWatch.timer); runWatch.timer=null; }
+  if(clearVar) runWatch=null;
+}
+
+/* ===== Secret Claude au bootstrap (feature : lancer une session sans terminal) ===== */
+async function checkSecret(repoId){
+  const target=repoId==="flotte"?META:repoId;
+  if(secretCache.has(target)) return secretCache.get(target);
+  let res="unknown";
+  try{ await gh(`/repos/${OWNER}/${target}/actions/secrets/CLAUDE_CODE_OAUTH_TOKEN`); res="present"; }
+  catch(e){ res = e.status===404 ? "absent" : "unknown"; } // 403 = droit « Secrets » absent du token
+  secretCache.set(target,res);
+  return res;
+}
+async function refreshSecretBadge(repoId){
+  const el=$("#secret-badge"); if(!el) return;
+  if(demo){ el.textContent="— (démo)"; el.style.color="var(--mut)"; return; }
+  const s=await checkSecret(repoId);
+  const cur=$("#secret-badge"); if(cur!==el || !document.body.contains(el)) return; // vue changée entre-temps
+  const map={present:["✓ en place","ok"], absent:["✗ à poser","crit"], unknown:["? (droit « Secrets » requis)","mut"]};
+  const [t,c]=map[s]||map.unknown;
+  el.textContent=t; el.style.color = c==="mut"?"var(--mut)":`var(--${c})`;
+}
+function openSecretPage(repoId){
+  const target=repoId==="flotte"?META:repoId;
+  try{ navigator.clipboard && navigator.clipboard.writeText("CLAUDE_CODE_OAUTH_TOKEN"); }catch(e){}
+  secretCache.delete(target);
+  window.open(`https://github.com/${OWNER}/${target}/settings/secrets/actions/new`,"_blank","noopener");
+  toast("🔑 Nom du secret copié : CLAUDE_CODE_OAUTH_TOKEN. Colle ta clé Claude dans l'onglet ouvert puis « Add secret » — aucun terminal.", 8000);
+}
+
 function renderDetail(){
   const r=ui.openRepo&&model.repos.find(x=>x.id===ui.openRepo);
   $("#view-fleet").hidden=!!r;
   $("#view-detail").hidden=!r;
-  if(!r){ $("#view-detail").innerHTML=""; return; }
+  if(!r){ stopJournal(); $("#view-detail").innerHTML=""; return; }
   const st=STATES[r.state];
   const lifeLabel={actif:"actif",veille:"en veille",archive:"archivé"}[r.life];
   const relatedIdeas=model.ideas.filter(i=>i.repo===r.id);
@@ -535,6 +692,24 @@ function renderDetail(){
       </div>
     </div>`:"";
 
+  const runBlock=r.lastRun?(()=>{
+    const rs=runStatusLabel(r.lastRun);
+    const col=rs.c==="mut"?"var(--mut)":`var(--${rs.c})`;
+    return `
+    <div class="block">
+      <div class="block-head">
+        <span class="eyebrow">Journal du run — ${esc(r.lastRun.wf||"Actions")}</span>
+        <span class="run-state num" style="color:${col}">${rs.t}</span>
+      </div>
+      <div class="run-title marginalia">${esc(r.lastRun.name)}</div>
+      <div id="run-journal" class="journal">${r.lastRun.running?'<p class="marginalia" style="margin:0">Connexion au run…</p>':""}</div>
+      <div class="block-actions">
+        ${r.lastRun.running?"":`<button class="btn" data-act="run-follow" data-n="${r.lastRun.id}">▸ Voir le déroulé</button>`}
+        <a class="ghlink" href="${esc(r.lastRun.url)}" target="_blank" rel="noopener">logs complets ↗</a>
+      </div>
+    </div>`;
+  })():"";
+
   $("#view-detail").innerHTML=`
     <div class="detail">
       <div class="detail-top">
@@ -543,8 +718,14 @@ function renderDetail(){
         <span class="pill" style="--c:${st.v}">${st.label}</span>
       </div>
       <div class="detail-meta">${esc(r.type)} · ${lifeLabel} · relevé ${esc(r.last)}</div>
+      <div class="kit-row">
+        <span class="eyebrow" style="letter-spacing:.08em; margin:0">🔑 Secret Claude</span>
+        <span id="secret-badge" class="secret-badge">vérification…</span>
+        <button class="btn-mini" data-act="secret-set" data-n="${esc(r.id)}">Poser / mettre à jour</button>
+      </div>
       <ul class="lines">${r.lines.map(lineHtml).join("")}</ul>
       ${prBlock}
+      ${runBlock}
       ${threadBlock}
       ${relatedIdeas.length?`
       <div class="sub-list">
@@ -570,6 +751,21 @@ function renderDetail(){
         <a class="ghlink" href="${esc(r.url)}" target="_blank" rel="noopener">au besoin : GitHub ↗</a>
       </div>
     </div>`;
+
+  // Secret Claude : vérification paresseuse (une requête par repo, mise en cache).
+  refreshSecretBadge(r.id);
+
+  // Journal de run : (re)brancher le suivi live sur la nouvelle boîte #run-journal.
+  if(r.lastRun){
+    const box=$("#run-journal");
+    if(runWatch && runWatch.repo===r.id && runWatch.runId===r.lastRun.id){
+      runWatch.box=box; // même run : on garde le suivi, on rebranche juste la boîte redessinée
+      renderJournalInto(box, runWatch.lastJobs || (demo?r.demoJobs:null));
+    } else {
+      stopJournal(); // repo différent ou nouveau run : on repart proprement
+      if(r.lastRun.running) startJournal(r.id, r.lastRun.id, box, demo?r.demoJobs:null);
+    }
+  } else stopJournal();
 }
 function renderSyncNote(){
   const el=$("#sync-note");
@@ -742,10 +938,63 @@ async function newProject(name,type,priv){
   await gh(`/repos/${OWNER}/${name}/contents/CLAUDE.md`,{method:"PUT",body:{
     message:"chore: kit de flotte — CLAUDE.md", content:b64e(claudeMd)}});
   await ensureLabel(name,"claude","5319E7","Déclenche une session Claude (kit de flotte)");
+  const secretUrl=`https://github.com/${OWNER}/${name}/settings/secrets/actions/new`;
   await gh(`/repos/${OWNER}/${name}/issues`,{method:"POST",body:{
     title:"Finaliser l'équipement du repo",
-    body:`Repo créé depuis FleetView avec les stubs du kit (${type}).\n\nReste à faire (session locale /equiper ou à la main) :\n- [ ] Personnaliser CLAUDE.md (placeholders TODO)\n- [ ] Poser le secret CLAUDE_CODE_OAUTH_TOKEN (ou ANTHROPIC_API_KEY)\n- [ ] Activer « Actions peut créer des PRs » (Settings → Actions)\n- [ ] Rafraîchir le registre : \`node scripts/fleet.mjs\` sur claude-ops\n${type.startsWith("cron")?"- [ ] Créer le workflow planifié (motif Recherche-Emploi) + self-heal\n":""}`}});
-  toast(`⚒ ${name} créé et équipé des stubs. Vois l'issue de finition (secret Claude à poser une fois).`, 7000);
+    body:`Repo créé depuis FleetView avec les stubs du kit (${type}).\n\nReste à faire (sans terminal) :\n- [ ] **Poser le secret \`CLAUDE_CODE_OAUTH_TOKEN\`** (ou \`ANTHROPIC_API_KEY\`) → [ouvrir la page du secret](${secretUrl}), coller la clé Claude, « Add secret ». Requis pour la première session.\n- [ ] Activer « Actions peut créer des PRs » (Settings → Actions → Workflow permissions)\n- [ ] Personnaliser CLAUDE.md (placeholders TODO)\n- [ ] Rafraîchir le registre : \`node scripts/fleet.mjs\` sur claude-ops (pour voir la carte dans FleetView)\n${type.startsWith("cron")?"- [ ] Créer le workflow planifié + self-heal\n":""}`}});
+  // Ouvre la page du secret et copie le nom : la première session part sans passer par un terminal.
+  try{ navigator.clipboard && navigator.clipboard.writeText("CLAUDE_CODE_OAUTH_TOKEN"); }catch(e){}
+  try{ window.open(secretUrl,"_blank","noopener"); }catch(e){}
+  toast(`⚒ ${name} créé et équipé. Onglet ouvert pour poser le secret Claude (nom copié) — colle ta clé, « Add secret », et la première session peut partir.`, 8000);
+}
+
+/* ================= Notifications ntfy ================= */
+// Push uniquement sur événements actionnables NOUVEAUX (question de Claude, PR prête).
+// Le lien de la notif rouvre FleetView sur le bon projet (?repo=…).
+function loadNotified(){ try{ return new Set(JSON.parse(localStorage.getItem("fv-notified")||"[]")); }catch(e){ return new Set(); } }
+function saveNotified(set){ try{ localStorage.setItem("fv-notified", JSON.stringify([...set].slice(-300))); }catch(e){} }
+async function publishNtfy(url, ev){
+  const i=url.lastIndexOf("/"); if(i<0) throw new Error("URL ntfy invalide (attendu : https://ntfy.sh/mon-sujet)");
+  const base=url.slice(0,i), topic=url.slice(i+1);
+  if(!topic) throw new Error("Sujet ntfy manquant dans l'URL.");
+  const click=location.origin+location.pathname+(ev.repo?"?repo="+enc(ev.repo):"");
+  const res=await fetch(base,{method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({topic, title:ev.title, message:ev.msg, click, tags:[ev.tag], priority:ev.prio||4})});
+  if(!res.ok) throw new Error("ntfy a répondu "+res.status);
+}
+async function runPush(){
+  const url=store.ntfy;
+  if(!url || demo || !model || !model.notify || !model.notify.length) return;
+  const seen=loadNotified(); let changed=false;
+  for(const ev of model.notify){
+    if(seen.has(ev.key)) continue;
+    seen.add(ev.key); changed=true;
+    try{ await publishNtfy(url, ev); }catch(e){ /* réseau/CORS : on retentera au prochain relevé */ }
+  }
+  if(changed) saveNotified(seen);
+}
+// À l'activation : marque les événements courants comme « déjà vus » pour ne pousser
+// QUE les nouveautés (sinon activation = rafale de toutes les notifs en attente).
+function seedNotified(){
+  const seen=loadNotified();
+  if(model && model.notify) for(const ev of model.notify) seen.add(ev.key);
+  saveNotified(seen);
+}
+// Deep-link : ?repo=<id> ouvre directement la vue projet, puis nettoie l'URL.
+function readDeepLink(){
+  try{
+    const rp=new URLSearchParams(location.search).get("repo");
+    if(rp){ pendingOpen=rp; history.replaceState(null,"",location.pathname); }
+  }catch(e){}
+}
+function applyPendingOpen(){
+  if(!pendingOpen || !model) return;
+  const target=pendingOpen; pendingOpen=null;
+  if(model.repos.some(x=>x.id===target)){
+    ui.openRepo=target; document.body.dataset.tab="flotte";
+    document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab==="flotte")));
+    renderDetail(); window.scrollTo({top:0});
+  }
 }
 
 /* ================= Rafraîchissement ================= */
@@ -771,6 +1020,8 @@ async function refresh(showErrors=true){
     await loadAll();
     banner(null);
     renderAll();
+    applyPendingOpen(); // deep-link ntfy éventuel
+    runPush();          // notifie les nouveaux événements actionnables
   }catch(e){
     if(e.status===401||e.status===403){
       banner("Token refusé par GitHub ("+e.status+"). Vérifie ses permissions ou recolle-le.", "");
@@ -882,6 +1133,8 @@ document.addEventListener("click",async(e)=>{
             await sendComment(r.id,n,"la session ne semble pas avoir abouti — reprends cette issue depuis le début."); await refresh(); } break;
           case "life": if(r){ b.disabled=true; await setLifecycle(r.id,n);
             if(n==="archivé") ui.openRepo=null; await refresh(); } break;
+          case "run-follow": if(r&&r.lastRun) startJournal(r.id, r.lastRun.id, $("#run-journal"), demo?r.demoJobs:null); break;
+          case "secret-set": openSecretPage(n||(r&&r.id)); break;
           case "demo": toast("Mode démo — relie ton token pour agir en vrai."); break;
         }
       }catch(err){ toast("Échec : "+err.message, 6000); b.disabled=false; }
@@ -1037,8 +1290,29 @@ $("#demo-link").addEventListener("click",async(e)=>{
 
 /* ================= Paramètres ================= */
 const modalSettings=$("#modal-settings");
-$("#btn-settings").addEventListener("click",()=>modalSettings.showModal());
+$("#btn-settings").addEventListener("click",()=>{
+  $("#ntfy-input").value=store.ntfy;
+  renderRate();
+  modalSettings.showModal();
+});
 $("#modal-settings-close").addEventListener("click",()=>modalSettings.close());
+// Notifications ntfy
+$("#ntfy-save").addEventListener("click",()=>{
+  const v=$("#ntfy-input").value.trim();
+  store.ntfy=v;
+  if(v){ seedNotified(); toast("🔔 Notifications activées — tu ne recevras que les NOUVEAUX événements (question de Claude, PR prête)."); }
+  else toast("Notifications désactivées.");
+});
+$("#ntfy-test").addEventListener("click",async()=>{
+  const v=$("#ntfy-input").value.trim()||store.ntfy;
+  if(!v){ toast("Renseigne d'abord l'URL du sujet ntfy (ex. https://ntfy.sh/mon-sujet)."); return; }
+  try{
+    await publishNtfy(v,{title:"FleetView — test", msg:"Si tu lis ceci sur ton téléphone, c'est branché 🎉",
+      repo:(model&&model.repos[0]&&model.repos[0].id)||"", tag:"bell", prio:3});
+    toast("🔔 Test envoyé — vérifie la notif sur ton téléphone.");
+  }catch(e){ toast("Échec de l'envoi : "+e.message, 6000); }
+});
+$("#ntfy-clear").addEventListener("click",()=>{ store.ntfy=""; $("#ntfy-input").value=""; toast("Notifications désactivées."); });
 $("#btn-change-token").addEventListener("click",()=>{
   modalSettings.close();
   $("#token-input").value="";
@@ -1056,6 +1330,7 @@ themeSel.addEventListener("change",()=>{
 
 /* ================= Init ================= */
 document.body.dataset.tab="flotte";
+readDeepLink(); // ?repo=… (ouverture depuis une notif ntfy)
 // Service worker : rend la coquille disponible hors-ligne (chemin relatif → scope /fleetview/).
 if("serviceWorker" in navigator){
   window.addEventListener("load",()=>{ navigator.serviceWorker.register("sw.js").catch(()=>{}); });
