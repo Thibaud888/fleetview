@@ -17,6 +17,9 @@ const store = {
   // Sujet ntfy pour les notifications push (URL secrète : reste en localStorage, jamais commitée).
   get ntfy(){ try{ return localStorage.getItem("fv-ntfy")||""; }catch(e){ return ""; } },
   set ntfy(v){ try{ v?localStorage.setItem("fv-ntfy",v):localStorage.removeItem("fv-ntfy"); }catch(e){} },
+  // Notifications natives de l'appareil (API Notification, sans service tiers).
+  get notif(){ try{ return localStorage.getItem("fv-notif")||""; }catch(e){ return ""; } },
+  set notif(v){ try{ v?localStorage.setItem("fv-notif",v):localStorage.removeItem("fv-notif"); }catch(e){} },
   // Dernier relevé, pour l'affichage hors-ligne (jamais de token ici : que le modèle normalisé).
   get snapshot(){ try{ const s=localStorage.getItem("fv-snapshot"); return s?JSON.parse(s):null; }catch(e){ return null; } },
   set snapshot(v){ try{ v?localStorage.setItem("fv-snapshot",JSON.stringify(v)):localStorage.removeItem("fv-snapshot"); }catch(e){} },
@@ -303,17 +306,14 @@ function buildModel(fleet, D){
       }
     }
 
-    // Dernier run Actions : proposé au journal live s'il tourne, ou s'il vient de finir (< 30 min).
+    // Dernier run Actions : toujours proposé au journal (live s'il tourne, déroulé consultable sinon).
     let lastRun=null;
     if(runs.length){
       const rr=runs[0];
       const running=["in_progress","queued","requested","waiting","pending"].includes(rr.status);
-      const ageMin=(Date.now()-new Date(rr.run_started_at||rr.created_at))/60000;
-      if(running || ageMin<30){
-        lastRun={ id:rr.id, name:rr.display_title||rr.name||"run", wf:rr.name||"",
-          status:rr.status, conclusion:rr.conclusion, running,
-          url:rr.html_url, started:rr.run_started_at||rr.created_at };
-      }
+      lastRun={ id:rr.id, name:rr.display_title||rr.name||"run", wf:rr.name||"",
+        status:rr.status, conclusion:rr.conclusion, running,
+        url:rr.html_url, started:rr.run_started_at||rr.created_at };
     }
 
     if(!lines.length) lines.push({c:"ok", t:"Rien en cours"});
@@ -617,14 +617,13 @@ async function checkSecret(repoId){
   secretCache.set(target,res);
   return res;
 }
+// La ligne n'apparaît QUE si le secret manque vraiment (404 confirmé) : un projet qui
+// tourne a déjà son secret, inutile de l'inquiéter — et sans droit « Secrets » on se tait.
 async function refreshSecretBadge(repoId){
-  const el=$("#secret-badge"); if(!el) return;
-  if(demo){ el.textContent="— (démo)"; el.style.color="var(--mut)"; return; }
+  const row=$("#kit-row"); if(!row || demo) return;
   const s=await checkSecret(repoId);
-  const cur=$("#secret-badge"); if(cur!==el || !document.body.contains(el)) return; // vue changée entre-temps
-  const map={present:["✓ en place","ok"], absent:["✗ à poser","crit"], unknown:["? (droit « Secrets » requis)","mut"]};
-  const [t,c]=map[s]||map.unknown;
-  el.textContent=t; el.style.color = c==="mut"?"var(--mut)":`var(--${c})`;
+  const cur=$("#kit-row"); if(cur!==row || !document.body.contains(row)) return; // vue changée entre-temps
+  if(s==="absent") row.hidden=false;
 }
 function openSecretPage(repoId){
   const target=repoId==="flotte"?META:repoId;
@@ -638,7 +637,7 @@ function renderDetail(){
   const r=ui.openRepo&&model.repos.find(x=>x.id===ui.openRepo);
   $("#view-fleet").hidden=!!r;
   $("#view-detail").hidden=!r;
-  if(!r){ stopJournal(); $("#view-detail").innerHTML=""; return; }
+  if(!r){ stopJournal(); document.body.classList.remove("thread-full-open"); $("#view-detail").innerHTML=""; return; }
   const st=STATES[r.state];
   const lifeLabel={actif:"actif",veille:"en veille",archive:"archivé"}[r.life];
   const relatedIdeas=model.ideas.filter(i=>i.repo===r.id);
@@ -673,13 +672,15 @@ function renderDetail(){
         <span class="count num">${msgs.length} messages</span>
         <button class="btn-mini" data-act="thread-top">↥ Début</button>
         <button class="btn-mini" data-act="thread-bottom">↧ Dernier</button>
-        <button class="btn-mini${ui.threadBig?" on":""}" data-act="thread-big">${ui.threadBig?"➖ Réduire":"➕ Agrandir"}</button>
       </div>`:"";
   const threadBlock=th?`
-    <div class="block">
-      <div class="block-head"><span class="eyebrow">Dialogue — issue #${th.num} « ${esc(th.title)} »</span></div>
+    <div class="block thread-block${ui.threadBig?" full":""}" id="thread-block">
+      <div class="block-head">
+        <span class="eyebrow">Dialogue — issue #${th.num} « ${esc(th.title)} »</span>
+        <button class="btn-mini${ui.threadBig?" on":""}" data-act="thread-big">${ui.threadBig?"✕ Fermer":"⛶ Plein écran"}</button>
+      </div>
       ${threadBar}
-      <div class="thread${ui.threadBig?" big":""}" id="thread-box">${msgs.map((m,i)=>{
+      <div class="thread" id="thread-box">${msgs.map((m,i)=>{
         const mine=m.user.login===OWNER;
         return `<div class="msg ${mine?"":"claude"}"><span class="who">${mine?"Toi":"Claude"} <span class="msg-n">${i+1}</span></span>
           <span class="bubble">${esc(String(m.body||"").replace(/^@claude\s*/i,""))}</span></div>`;
@@ -701,7 +702,7 @@ function renderDetail(){
         <span class="eyebrow">Journal du run — ${esc(r.lastRun.wf||"Actions")}</span>
         <span class="run-state num" style="color:${col}">${rs.t}</span>
       </div>
-      <div class="run-title marginalia">${esc(r.lastRun.name)}</div>
+      <div class="run-title marginalia">${esc(r.lastRun.name)} · ${esc(timeAgo(r.lastRun.started))}</div>
       <div id="run-journal" class="journal">${r.lastRun.running?'<p class="marginalia" style="margin:0">Connexion au run…</p>':""}</div>
       <div class="block-actions">
         ${r.lastRun.running?"":`<button class="btn" data-act="run-follow" data-n="${r.lastRun.id}">▸ Voir le déroulé</button>`}
@@ -718,10 +719,10 @@ function renderDetail(){
         <span class="pill" style="--c:${st.v}">${st.label}</span>
       </div>
       <div class="detail-meta">${esc(r.type)} · ${lifeLabel} · relevé ${esc(r.last)}</div>
-      <div class="kit-row">
-        <span class="eyebrow" style="letter-spacing:.08em; margin:0">🔑 Secret Claude</span>
-        <span id="secret-badge" class="secret-badge">vérification…</span>
-        <button class="btn-mini" data-act="secret-set" data-n="${esc(r.id)}">Poser / mettre à jour</button>
+      <div class="kit-row" id="kit-row" hidden>
+        <span class="secret-badge">🔑 Secret <code>CLAUDE_CODE_OAUTH_TOKEN</code> manquant sur ce repo —
+          requis pour que les sessions Claude puissent démarrer.</span>
+        <button class="btn-mini" data-act="secret-set" data-n="${esc(r.id)}">Le poser (sans terminal)</button>
       </div>
       <ul class="lines">${r.lines.map(lineHtml).join("")}</ul>
       ${prBlock}
@@ -751,6 +752,9 @@ function renderDetail(){
         <a class="ghlink" href="${esc(r.url)}" target="_blank" rel="noopener">au besoin : GitHub ↗</a>
       </div>
     </div>`;
+
+  // Dialogue en plein écran : on fige le défilement de la page derrière.
+  document.body.classList.toggle("thread-full-open", !!(ui.threadBig && th));
 
   // Secret Claude : vérification paresseuse (une requête par repo, mise en cache).
   refreshSecretBadge(r.id);
@@ -953,23 +957,41 @@ async function newProject(name,type,priv){
 // Le lien de la notif rouvre FleetView sur le bon projet (?repo=…).
 function loadNotified(){ try{ return new Set(JSON.parse(localStorage.getItem("fv-notified")||"[]")); }catch(e){ return new Set(); } }
 function saveNotified(set){ try{ localStorage.setItem("fv-notified", JSON.stringify([...set].slice(-300))); }catch(e){} }
+function notifClickUrl(ev){ return location.origin+location.pathname+(ev.repo?"?repo="+enc(ev.repo):""); }
+// Publication ntfy : POST directement sur l'URL du sujet, métadonnées en query string
+// (l'endpoint canonique — le POST JSON à la racine est refusé par certaines configurations, d'où des 405).
 async function publishNtfy(url, ev){
-  const i=url.lastIndexOf("/"); if(i<0) throw new Error("URL ntfy invalide (attendu : https://ntfy.sh/mon-sujet)");
-  const base=url.slice(0,i), topic=url.slice(i+1);
-  if(!topic) throw new Error("Sujet ntfy manquant dans l'URL.");
-  const click=location.origin+location.pathname+(ev.repo?"?repo="+enc(ev.repo):"");
-  const res=await fetch(base,{method:"POST", headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({topic, title:ev.title, message:ev.msg, click, tags:[ev.tag], priority:ev.prio||4})});
+  let u; try{ u=new URL(url); }catch(e){ throw new Error("URL ntfy invalide (attendu : https://ntfy.sh/mon-sujet)"); }
+  if(u.pathname.replace(/\/+$/,"").length<2) throw new Error("Sujet manquant dans l'URL ntfy (attendu : https://ntfy.sh/mon-sujet).");
+  const q=new URLSearchParams({title:ev.title, click:notifClickUrl(ev), tags:ev.tag||"bell", priority:String(ev.prio||4)});
+  const res=await fetch(u.origin+u.pathname.replace(/\/+$/,"")+"?"+q, {method:"POST", body:ev.msg});
   if(!res.ok) throw new Error("ntfy a répondu "+res.status);
 }
+// Notification native de l'appareil : aucun service tiers, le service worker l'affiche
+// (obligatoire sur Android) et son clic rouvre FleetView sur le bon projet.
+async function nativeNotify(ev){
+  if(!("Notification" in window) || Notification.permission!=="granted") return false;
+  const opts={ body:ev.msg, tag:ev.key, icon:"icon-192.png", badge:"maskable-192.png", data:{url:notifClickUrl(ev)} };
+  try{
+    if("serviceWorker" in navigator){
+      const reg=await navigator.serviceWorker.ready;
+      await reg.showNotification(ev.title, opts);
+      return true;
+    }
+  }catch(e){}
+  try{ new Notification(ev.title, opts); return true; }catch(e){ return false; }
+}
 async function runPush(){
+  if(demo || !model || !model.notify || !model.notify.length) return;
+  const wantNative = store.notif==="on" && "Notification" in window && Notification.permission==="granted";
   const url=store.ntfy;
-  if(!url || demo || !model || !model.notify || !model.notify.length) return;
+  if(!wantNative && !url) return;
   const seen=loadNotified(); let changed=false;
   for(const ev of model.notify){
     if(seen.has(ev.key)) continue;
     seen.add(ev.key); changed=true;
-    try{ await publishNtfy(url, ev); }catch(e){ /* réseau/CORS : on retentera au prochain relevé */ }
+    if(wantNative) nativeNotify(ev);
+    if(url){ try{ await publishNtfy(url, ev); }catch(e){ /* réseau : on ne bloque pas le relevé */ } }
   }
   if(changed) saveNotified(seen);
 }
@@ -1094,7 +1116,7 @@ document.addEventListener("click",async(e)=>{
       return;
     }
     if(b.dataset.open!==undefined){
-      ui.openRepo=b.dataset.open;
+      ui.openRepo=b.dataset.open; ui.threadBig=false;
       document.body.dataset.tab="flotte";
       document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab==="flotte")));
       renderDetail(); window.scrollTo({top:0}); return;
@@ -1113,7 +1135,7 @@ document.addEventListener("click",async(e)=>{
       const n=b.dataset.n;
       try{
         switch(b.dataset.act){
-          case "back": ui.openRepo=null; renderDetail(); break;
+          case "back": ui.openRepo=null; ui.threadBig=false; renderDetail(); break;
           case "open-thread": renderDetail(); break; // le fil est déjà dans la vue
           case "open-pr": /* bloc PR déjà dans la vue détail */ if(r) renderDetail(); break;
           case "gh-issue": if(r) window.open(`${r.url}/issues/${n}`,"_blank"); break;
@@ -1124,7 +1146,8 @@ document.addEventListener("click",async(e)=>{
             b.disabled=true; await sendComment(r.id,n,cadre?changesCadrage(v):v); await refresh(); } break;
           case "thread-send": if(r){ const v=$("#thread-reply").value.trim(); if(!v)break;
             b.disabled=true; await sendComment(r.id,n,v); await refresh(); } break;
-          case "thread-big": ui.threadBig=!ui.threadBig; renderDetail(); break;
+          case "thread-big": ui.threadBig=!ui.threadBig; renderDetail();
+            if(ui.threadBig){ const ms=document.querySelectorAll("#thread-box .msg"); if(ms.length) ms[ms.length-1].scrollIntoView({block:"end"}); } break;
           case "thread-top": { const m=document.querySelector("#thread-box .msg"); if(m) m.scrollIntoView({behavior:"smooth",block:"nearest"}); } break;
           case "thread-bottom": { const ms=document.querySelectorAll("#thread-box .msg"); if(ms.length) ms[ms.length-1].scrollIntoView({behavior:"smooth",block:"nearest"}); } break;
           case "rerun": { const repoId=r?r.id:(e.target.closest(".card")||{}).dataset?.card;
@@ -1292,10 +1315,32 @@ $("#demo-link").addEventListener("click",async(e)=>{
 const modalSettings=$("#modal-settings");
 $("#btn-settings").addEventListener("click",()=>{
   $("#ntfy-input").value=store.ntfy;
-  renderRate();
+  renderRate(); updateNotifStatus();
   modalSettings.showModal();
 });
 $("#modal-settings-close").addEventListener("click",()=>modalSettings.close());
+// Notifications natives (API Notification du navigateur — sans service tiers)
+function updateNotifStatus(){
+  const el=$("#notif-status"); if(!el) return;
+  if(!("Notification" in window)){ el.textContent="non gérées par ce navigateur"; return; }
+  if(Notification.permission==="denied"){ el.textContent="bloquées — vois les autorisations du site"; return; }
+  el.textContent = (store.notif==="on"&&Notification.permission==="granted") ? "✓ activées" : "désactivées";
+}
+$("#notif-native").addEventListener("click",async()=>{
+  if(!("Notification" in window)){ toast("Ce navigateur ne gère pas les notifications."); return; }
+  if(store.notif==="on"&&Notification.permission==="granted"){ // second appui : désactive
+    store.notif=""; updateNotifStatus(); toast("Notifications de l'appareil désactivées."); return;
+  }
+  const p=await Notification.requestPermission();
+  if(p==="granted"){
+    store.notif="on"; seedNotified(); updateNotifStatus();
+    toast("🔔 Activées — tu ne seras notifié que d'une question de Claude ou d'une PR prête.");
+    nativeNotify({key:"test-"+Date.now(), title:"FleetView — test", msg:"Les notifications de l'appareil fonctionnent 🎉", repo:"", tag:"bell"});
+  } else {
+    store.notif=""; updateNotifStatus();
+    toast(p==="denied"?"Notifications bloquées par le navigateur — Android : Paramètres du site → Notifications.":"Permission non accordée.");
+  }
+});
 // Notifications ntfy
 $("#ntfy-save").addEventListener("click",()=>{
   const v=$("#ntfy-input").value.trim();

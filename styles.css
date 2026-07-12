@@ -291,18 +291,30 @@ code{font-family:var(--font-mono); font-size:.82em; background:var(--surface-2);
 .msg-n{font-family:var(--font-mono); font-size:9px; opacity:.55; margin-left:2px}
 .thread-bar{display:flex; align-items:center; gap:7px; margin-bottom:9px; flex-wrap:wrap}
 .thread-bar .count{margin-right:auto; color:var(--mut); font-size:11px}
-.thread-bar .btn-mini.on{background:var(--accent-soft); border-color:var(--accent); color:var(--accent)}
-.thread.big{max-height:none; font-size:15.5px}
-.thread.big .who{font-size:12px; width:auto}
-.thread.big .bubble{line-height:1.65}
+.block-head .btn-mini.on{background:var(--accent-soft); border-color:var(--accent); color:var(--accent)}
+/* Dialogue en plein écran : le bloc sort de sa boîte et remplit l'appareil */
+.thread-block.full{
+  position:fixed; inset:0; z-index:70; margin:0; border:none; border-radius:0;
+  background:var(--bg); display:flex; flex-direction:column; overflow:hidden;
+  padding:14px 16px calc(12px + env(safe-area-inset-bottom,0px));
+}
+.thread-block.full .block-head{flex:none}
+.thread-block.full .thread-bar{flex:none}
+.thread-block.full .thread{flex:1; max-height:none; font-size:16px; overscroll-behavior:contain}
+.thread-block.full .bubble{line-height:1.65}
+.thread-block.full .who{font-size:12px}
+.thread-block.full .reply{flex:none}
+body.thread-full-open{overflow:hidden}
 .reply{display:flex; gap:9px; margin-top:11px}
 .reply textarea{flex:1; border:1px solid var(--line-strong); border-radius:var(--r-sm); background:var(--surface); color:var(--ink); padding:8px 11px; font-family:var(--font-sans); font-size:13.5px; resize:vertical; min-height:44px}
 .detail-actions{display:flex; gap:9px; flex-wrap:wrap; margin-top:18px; padding-top:14px; border-top:1px solid var(--line)}
 .detail-actions .ghlink{margin-left:auto; font-family:var(--font-mono); font-size:11.5px; align-self:center}
 
-/* Secret Claude (bootstrap sans terminal) */
-.kit-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 14px; padding:8px 12px; border:1px dashed var(--line-strong); border-radius:var(--r-sm); background:var(--surface-2)}
-.secret-badge{font-family:var(--font-mono); font-size:12px; color:var(--mut); flex:1; min-width:90px}
+/* Secret Claude manquant (bootstrap sans terminal) — visible seulement si absent */
+.kit-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 14px; padding:9px 12px;
+  border:1px dashed color-mix(in srgb, var(--crit) 45%, var(--line-strong)); border-radius:var(--r-sm);
+  background:color-mix(in srgb, var(--crit) 6%, var(--surface-2))}
+.secret-badge{font-family:var(--font-sans); font-size:13px; color:var(--ink-soft); flex:1; min-width:200px}
 
 /* Journal de run en direct */
 .run-state{font-size:11px; white-space:nowrap}
