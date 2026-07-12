@@ -20,6 +20,11 @@ Actions → PR).
 
 ## Démarrer
 
+Version en ligne : **[thibaud888.github.io/fleetview](https://thibaud888.github.io/fleetview/)** —
+sur téléphone, « Ajouter à l'écran d'accueil » pour l'installer en PWA.
+
+En local :
+
 ```bash
 npx serve -l 4010 .        # puis http://localhost:4010
 ```
@@ -36,7 +41,7 @@ Les permissions exactes du token, tous les concepts et l'architecture sont dans 
 |---|---|
 | **Lancer** | `npx serve -l 4010 .` |
 | **Vérifier** | `node scripts/verify.mjs` |
-| **Déployer** | GitHub Pages (`pages.yml`, sur `main`) — nécessite le repo public |
+| **Déployer** | GitHub Pages : [thibaud888.github.io/fleetview](https://thibaud888.github.io/fleetview/) (`pages.yml`, sur `main`) |
 | **Coût** | 0 € (Pages + API GitHub, ~25 requêtes/relevé sur 5 000/h) |
 | **Feuille de route** | [BACKLOG.md](BACKLOG.md) |
 
