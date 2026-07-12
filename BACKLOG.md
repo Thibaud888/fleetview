@@ -11,3 +11,4 @@
 - [ ] Notifications ntfy cliquables vers la vue projet — DoD : le lien d'une notif ouvre FleetView sur le bon repo.
 - [ ] Passage du repo en public — historique vérifié (aucun secret), URL Pages documentée dans le README ([PR #6](https://github.com/Thibaud888/fleetview/pull/6)) ; reste le geste manuel : Settings → Change visibility → Make public.
 - [x] Workflow Pages en pause tant que le repo est privé (garde `if` dans le stub, réactivation automatique au passage en public) — [PR #5](https://github.com/Thibaud888/fleetview/pull/5).
+- [x] Bouton micro 🎙️ pour dicter les idées (Web Speech API) — [PR #10](https://github.com/Thibaud888/fleetview/pull/10).

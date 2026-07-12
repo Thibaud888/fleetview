@@ -789,6 +789,53 @@ $("#quick-add").addEventListener("click",async()=>{
 });
 $("#quick-input").addEventListener("keydown",(e)=>{ if(e.key==="Enter"){ e.preventDefault(); $("#quick-add").click(); } });
 
+/* ================= Dictée vocale (codex idées) ================= */
+(function initMic(){
+  const btn=$("#quick-mic");
+  const Ctor=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!Ctor) return; // API absente (ex. Firefox) : le bouton reste masqué
+  const input=$("#quick-input");
+  const interimEl=$("#quick-mic-interim");
+  const rec=new Ctor();
+  rec.lang="fr-FR"; rec.interimResults=true; rec.continuous=false;
+  let listening=false, baseValue="";
+  function setListening(on){
+    listening=on; btn.classList.toggle("on",on);
+    if(!on){ interimEl.hidden=true; interimEl.textContent=""; }
+  }
+  function appendFinal(text){
+    const t=text.trim(); if(!t) return;
+    baseValue = baseValue ? (baseValue+" "+t) : t;
+    input.value=baseValue;
+  }
+  rec.addEventListener("result",(e)=>{
+    let interim="";
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const res=e.results[i];
+      if(res.isFinal) appendFinal(res[0].transcript);
+      else interim+=res[0].transcript;
+    }
+    if(interim){ interimEl.textContent=interim; interimEl.hidden=false; }
+    else { interimEl.hidden=true; interimEl.textContent=""; }
+  });
+  rec.addEventListener("end",()=>setListening(false));
+  rec.addEventListener("error",(e)=>{
+    setListening(false);
+    if(e.error==="not-allowed"||e.error==="service-not-allowed"){
+      toast("Micro refusé : autorise l'accès au micro pour dicter une idée.");
+    } else if(e.error!=="no-speech" && e.error!=="aborted"){
+      toast("Dictée vocale indisponible pour le moment.");
+    }
+  });
+  btn.addEventListener("click",()=>{
+    if(listening){ rec.stop(); return; }
+    baseValue=input.value;
+    try{ rec.start(); setListening(true); }
+    catch(err){ setListening(false); }
+  });
+  btn.hidden=false;
+})();
+
 $("#token-save").addEventListener("click",async()=>{
   const v=$("#token-input").value.trim(); if(!v) return;
   store.token=v; demo=false;
