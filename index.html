@@ -127,6 +127,10 @@
       <div class="field">
         <label for="f-title">Titre</label>
         <input id="f-title" type="text" placeholder="Ex. : corriger l'affichage mobile du quiz" required>
+        <div class="mic-row">
+          <button type="button" class="btn btn-mic" data-mic="#f-title" data-mic-interim="#f-title-interim" aria-label="Dicter le titre" title="Dicter le titre">🎙️</button>
+          <span class="mic-interim" id="f-title-interim" hidden></span>
+        </div>
       </div>
       <div class="field">
         <label for="f-desc">Détails <small>— tout ce que tu as en tête, même en vrac</small></label>
