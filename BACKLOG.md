@@ -18,4 +18,5 @@
 - [ ] Passage du repo en public — historique vérifié (aucun secret), URL Pages documentée dans le README ([PR #6](https://github.com/Thibaud888/fleetview/pull/6)) ; reste le geste manuel : Settings → Change visibility → Make public.
 - [x] Workflow Pages en pause tant que le repo est privé (garde `if` dans le stub, réactivation automatique au passage en public) — [PR #5](https://github.com/Thibaud888/fleetview/pull/5).
 - [x] Bouton micro 🎙️ pour dicter les idées (Web Speech API) — [PR #10](https://github.com/Thibaud888/fleetview/pull/10).
+- [x] Micro dans le champ titre du cadrage — bouton 🎙️ sur `#f-title`, même moteur générique `[data-mic]` que le détail, sans régression sur le micro du champ détail (issue #21, miroir de claude-ops#12).
 - [ ] Fiabiliser la boucle de dispatch (suite à l'échec `max_turns` de l'issue #19) : `verify.mjs` réécrit sur un serveur HTTP natif (zéro téléchargement, arrêt propre, plus d'orphelins `npx serve` en CI) ; serveur MCP GitHub ajouté à la session (`.mcp.json` + `mcp__github__*` dans l'allow-list projet) pour que les opérations GitHub ne brûlent plus de tours via le CLI `gh`.
