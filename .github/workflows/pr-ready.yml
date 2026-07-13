@@ -1,0 +1,11 @@
+# Stub flotte : sort du brouillon les PR `claude/*` ouvertes en draft (logique dans fleet-kit).
+# Rend mergeables sans clic supplémentaire les PR des sessions Claude Code web / FleetView.
+name: PR ready
+on:
+  pull_request:
+    types: [opened, reopened]
+jobs:
+  ready:
+    uses: Thibaud888/fleet-kit/.github/workflows/pr-ready.yml@main
+    permissions:
+      pull-requests: write
