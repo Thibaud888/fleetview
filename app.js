@@ -341,7 +341,11 @@ function buildModel(fleet, D){
   });
 
   feed.sort((a,b)=>b.ts<a.ts?-1:1);
-  return { repos, ideas, attention, feed: feed.slice(0,16), notify };
+  // « À traiter » et notifications ne concernent que les repos suivis : on écarte les
+  // archivés, dont une PR ou une issue claude peut rester ouverte après archivage.
+  const archived = new Set(repos.filter(r=>r.life==="archive").map(r=>r.id));
+  const keep = x=>!archived.has(x.repo);
+  return { repos, ideas, attention: attention.filter(keep), feed: feed.slice(0,16), notify: notify.filter(keep) };
 }
 
 /* ================= Mode démo ================= */
