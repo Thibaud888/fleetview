@@ -255,7 +255,10 @@ function buildModel(fleet, D){
   });
 
   feed.sort((a,b)=>b.ts<a.ts?-1:1);
-  return { repos, ideas, attention, feed: feed.slice(0,16) };
+  // « À traiter » ne concerne que les repos suivis : on écarte les archivés,
+  // dont une PR ou une issue claude peut rester ouverte après archivage.
+  const archived = new Set(repos.filter(r=>r.life==="archive").map(r=>r.id));
+  return { repos, ideas, attention: attention.filter(x=>!archived.has(x.repo)), feed: feed.slice(0,16) };
 }
 
 /* ================= Mode démo ================= */
