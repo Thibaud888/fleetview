@@ -481,6 +481,7 @@ function renderGrid(){
       <ul class="lines">${r.lines.map(lineHtml).join("")}</ul>
       <footer class="card-foot">
         <span class="last">relevé ${esc(r.last)}</span>
+        <button class="btn-mini" data-cloud-repo="${esc(r.id)}" title="Session cloud interactive (claude.ai/code)">🌩 Session</button>
         <button class="btn-mini" data-newfor="${esc(r.id)}">＋ Demande</button>
       </footer>
     </article>`;
@@ -536,7 +537,8 @@ function renderIdeas(){
     <div class="idea${open?" open":""}" data-idea="${i.num}">
       <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
       <span class="idea-body" data-idea-toggle="${i.num}" role="button" tabindex="0">${esc(i.t)}<span class="idea-repo">${esc(i.repo)}${i.desc?" · …":""}</span></span>
-      <button class="idea-launch" data-launch="${i.num}" title="Détailler puis lancer">🚀</button>
+      <button class="idea-launch" data-cloud="${i.num}" title="Session cloud interactive (claude.ai/code)">🌩</button>
+      <button class="idea-launch" data-launch="${i.num}" title="Cadrer puis lancer en issue">🚀</button>
     </div>
     ${open?`<div class="idea-more">${edit?ideaEditHtml(i):`
       ${i.desc?`<p class="idea-desc">${esc(i.desc)}</p>`:""}
@@ -753,7 +755,8 @@ function renderDetail(){
           <div class="sub-row">
             <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
             <span style="flex:1">${esc(i.t)}</span>
-            <button class="idea-launch" data-launch="${i.num}">🚀</button>
+            <button class="idea-launch" data-cloud="${i.num}" title="Session cloud interactive">🌩</button>
+            <button class="idea-launch" data-launch="${i.num}" title="Cadrer puis lancer en issue">🚀</button>
           </div>`).join("")}
       </div>`:""}
       ${relatedFeed.length?`
@@ -763,7 +766,8 @@ function renderDetail(){
           <div class="sub-row"><span class="t num">${esc(dayLabel(f.ts))} ${hhmm(f.ts)}</span><span style="flex:1">${esc(f.txt)}</span></div>`).join("")}
       </div>`:""}
       <div class="detail-actions">
-        <button class="btn btn-primary" data-newfor="${esc(r.id)}">＋ Demande</button>
+        <button class="btn btn-primary" data-cloud-repo="${esc(r.id)}">🌩 Session cloud</button>
+        <button class="btn" data-newfor="${esc(r.id)}">＋ Demande</button>
         ${r.life==="actif"?`<button class="btn" data-act="life" data-n="veille">⏸ Mettre en veille</button>`
                           :`<button class="btn" data-act="life" data-n="actif">▶ Réactiver</button>`}
         <button class="btn" data-act="life" data-n="archivé">🗄 Archiver</button>
@@ -970,6 +974,68 @@ async function newProject(name,type,priv){
   toast(`⚒ ${name} créé et équipé. Onglet ouvert pour poser le secret Claude (nom copié) — colle ta clé, « Add secret », et la première session peut partir.`, 8000);
 }
 
+/* ================= Lanceur de session cloud ================= */
+// L'interactif (cadrage, questions/réponses, précisions) passe par une session claude.ai/code :
+// conversation continue, suivable sur mobile, reprenable dans l'app desktop, sur l'abonnement.
+// Aucune API publique ne permet de pré-remplir une session : on compose le prompt, on le copie,
+// et on ouvre claude.ai/code — le geste assumé est copier → coller.
+function composeCloudPrompt({repo, title, desc}){
+  const target = repo==="flotte" ? META : repo;
+  const tache = title
+    ? `## Tâche\n${title}${desc?`\n\n${desc}`:""}`
+    : `## Tâche\n_(à préciser dans la session : dis-moi ce que tu veux faire sur ce repo)_`;
+  return `Travaille sur le repo GitHub **${OWNER}/${target}**.
+
+${tache}
+
+## Règles de la flotte
+- Lis \`MAP.md\` puis \`CLAUDE.md\` du repo d'abord ; n'explore que ce qu'ils ne couvrent pas.
+- Travaille sur une branche dédiée \`claude/<slug>\`, jamais directement sur la branche par défaut.
+- Vérifie avant de conclure : lance le script verify du repo (souvent \`node scripts/verify.mjs\`) ou build + tests, et regarde le résultat tourner.
+- Ouvre la PR toi-même avec \`gh pr create\` (titre et corps en français) ; mets à jour \`BACKLOG.md\` dans la même PR.
+
+On cadre ensemble ici : pose-moi tes questions au fil de l'eau, je te réponds dans cette session avant que tu n'ailles trop loin.`;
+}
+// Copie synchrone (dans le geste de clic, sans dépendre du focus ni d'un contexte sécurisé) :
+// la voie la plus fiable sur mobile et en http. L'API Clipboard moderne sert de filet.
+function copyViaTextarea(text){
+  try{
+    const ta=document.createElement("textarea");
+    ta.value=text; ta.setAttribute("readonly","");
+    ta.style.position="fixed"; ta.style.top="-1000px"; ta.style.opacity="0";
+    document.body.appendChild(ta);
+    ta.select(); ta.setSelectionRange(0, text.length);
+    const ok=document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  }catch(e){ return false; }
+}
+function showCloudPrompt(text){
+  const dlg=$("#modal-cloud"), ta=$("#cloud-prompt-text");
+  if(dlg && ta){ ta.value=text; dlg.showModal(); setTimeout(()=>{ ta.focus(); ta.select(); }, 50); }
+  else { try{ window.prompt("Copie ce prompt, puis colle-le dans claude.ai/code :", text); }catch(e){} }
+}
+function launchCloud(ctx){
+  const text=composeCloudPrompt(ctx);
+  if(demo){ // en démo : on montre le prompt composé, sans ouvrir d'onglet externe ni copier en douce
+    showCloudPrompt(text);
+    toast("Mode démo — voici le prompt qui serait copié puis ouvert dans claude.ai/code.", 6000);
+    return;
+  }
+  const copied=copyViaTextarea(text);                          // synchrone, dans le geste
+  const win=window.open("https://claude.ai/code","_blank","noopener"); // dans le geste (sinon bloqué)
+  const done=(ok)=>{
+    if(ok) toast(win
+      ? "🌩 Prompt copié — colle-le (Ctrl/Cmd+V) dans la nouvelle session claude.ai/code."
+      : "🌩 Prompt copié. Autorise les pop-ups ou ouvre claude.ai/code, puis colle-le (Ctrl/Cmd+V).", 7000);
+    else showCloudPrompt(text);                                // dernier recours : copie manuelle
+  };
+  if(copied) done(true);
+  else if(navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(text).then(()=>done(true)).catch(()=>done(false));
+  else done(false);
+}
+
 /* ================= Notifications ntfy ================= */
 // Push uniquement sur événements actionnables NOUVEAUX (question de Claude, PR prête).
 // Le lien de la notif rouvre FleetView sur le bon projet (?repo=…).
@@ -1144,6 +1210,13 @@ document.addEventListener("click",async(e)=>{
       if(idea){ ideaLaunchCtx=idea; openModal({repo:idea.repo==="flotte"?"flotte":idea.repo,title:idea.t,desc:idea.desc,hideBox:true}); }
       return;
     }
+    // Session cloud interactive : depuis un item du codex (contexte = idée) ou une carte/vue projet.
+    if(b.dataset.cloud!==undefined){
+      const idea=model.ideas.find(i=>i.num===Number(b.dataset.cloud));
+      if(idea) launchCloud({repo:idea.repo, title:idea.t, desc:idea.desc});
+      return;
+    }
+    if(b.dataset.cloudRepo!==undefined){ launchCloud({repo:b.dataset.cloudRepo}); return; }
     if(b.dataset.unarchive!==undefined){
       try{ await setLifecycle(b.dataset.unarchive,"actif"); await refresh(); }catch(err){ toast("Échec : "+err.message); }
       return;
@@ -1341,6 +1414,7 @@ $("#btn-settings").addEventListener("click",()=>{
   modalSettings.showModal();
 });
 $("#modal-settings-close").addEventListener("click",()=>modalSettings.close());
+$("#modal-cloud-close").addEventListener("click",()=>$("#modal-cloud").close());
 // Notifications natives (API Notification du navigateur — sans service tiers)
 function updateNotifStatus(){
   const el=$("#notif-status"); if(!el) return;
