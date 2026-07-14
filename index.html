@@ -91,6 +91,7 @@
       <div class="panel-head">
         <h2 class="eyebrow"><span class="orn">❧</span>Tâches de la flotte · <span id="tasks-count" class="num">—</span></h2>
         <span class="marginalia" id="tasks-note" style="font-size:12px"></span>
+        <button class="btn-mini" id="tasks-codex-filter" aria-pressed="false" title="Ne montrer que les tâches promues depuis le codex">📱</button>
         <button class="btn-mini" id="tasks-reload" title="Lire les BACKLOG.md de tous les repos actifs">⟳ Lire</button>
       </div>
       <div id="tasks-box"><p class="marginalia" style="padding:12px 15px">Les <code>BACKLOG.md</code> de la flotte se lisent à la demande — bouton « ⟳ Lire » (l'onglet Tâches le fait sur mobile).</p></div>
@@ -101,7 +102,7 @@
     <section class="panel" id="panel-idees">
       <div class="panel-head">
         <h2 class="eyebrow"><span class="orn">❧</span>Codex des idées · <span id="ideas-count" class="num"></span></h2>
-        <span class="marginalia" style="font-size:12px">par priorité</span>
+        <span class="marginalia" style="font-size:12px">cadrées chaque matin → backlog</span>
       </div>
       <div id="ideas"></div>
       <div class="codex-add">
@@ -158,7 +159,7 @@
           <label class="radio-card"><input type="radio" name="f-when" value="direct">
             <span><b>⚡ Issue directe</b><small>fire-and-forget : l'issue part telle quelle, session Actions → PR — pour les demandes déjà limpides</small></span></label>
           <label class="radio-card" id="opt-box"><input type="radio" name="f-when" value="box">
-            <span><b>💡 Codex</b><small>rangée dans la boîte, lançable plus tard d'un clic</small></span></label>
+            <span><b>💡 Codex</b><small>rangée dans la boîte ; cadrée et promue au backlog chaque matin, ou tout de suite d'un 🪶</small></span></label>
         </div>
       </div>
       <div class="field prio-row" id="f-prio-row">

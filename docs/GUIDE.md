@@ -46,7 +46,7 @@ Au premier lancement, FleetView demande un token pour parler à l'API GitHub en 
    | Contents | Read & write | Lire/écrire `fleet.json` (cycle de vie), copier les fichiers du kit |
    | Issues | Read & write | Lire les issues `claude`/`idée`, en créer, commenter la session |
    | Pull requests | Read & write | Lire les PRs + checks, merger, demander des changements |
-   | Actions | Read & write | Lire l'état des runs, en relancer un |
+   | Actions | Read & write | Lire l'état des runs, en relancer un, déclencher le cadrage d'une idée (🪶) |
    | Metadata | Read | Obligatoire (dépendance implicite des autres) |
    | Administration | Read & write | **Seulement** si tu veux créer des projets depuis l'interface |
 
@@ -129,15 +129,29 @@ Il est stocké dans le champ `statut` de `fleet.json`.
 
 (Le statut `gelé` hérité du registre est traité comme *archivé*.)
 
-### Le codex et les priorités
-Une idée qu'on note « pour plus tard » n'est pas une tâche lancée. Le codex les garde
-au chaud, triées par priorité :
+### Le codex : une salle d'attente, pas un deuxième stock
+Le codex n'est **pas** une liste de tâches — c'est la **salle d'attente** des idées jetées en
+vrac (même dictées au micro), le temps qu'elles soient **cadrées**. La liste des tâches, c'est
+les `BACKLOG.md` des repos (vue **Tâches**). Le passage de l'une à l'autre est automatique :
 
+- **Chaque matin**, le workflow `codex-cadrage.yml` (claude-ops, session Haiku) relit les idées
+  en attente. Une idée **limpide** devient un item `- [ ] (Px) titre — contexte/DoD 📱` dans le
+  `BACKLOG.md` du projet visé, et son issue se ferme avec le lien. Une idée **floue** reçoit des
+  **questions 🪶** en commentaire (+ label `à-préciser`, affiché « ⏳ à préciser » au codex) —
+  tu réponds sur l'issue, elle est promue au passage suivant. Le cadrage n'implémente **jamais**.
+- **Tout de suite** : le bouton **🪶 Cadrer** de chaque idée déclenche le même workflow sur
+  cette seule idée, sans attendre le matin.
+
+Les priorités suivent l'idée jusqu'au backlog :
 - **P1** — dès que possible · **P2** — quand j'en ai envie · **P3** — un jour peut-être.
 
 Chaque idée est rattachée à un **projet** (ou à `flotte` = le repo méta claude-ops si elle
 est transverse). Techniquement, une idée = une issue `idée` + label de priorité sur claude-ops.
-**Tant qu'une idée dort, elle ne coûte rien** : aucune session, aucun token.
+**Tant qu'une idée attend, elle ne coûte rien** ; son cadrage coûte une courte session Haiku.
+
+> ⚠️ Promouvoir vers un autre repo que claude-ops exige le secret **`FLEET_GH_TOKEN`** (PAT
+> fine-grained, Contents R&W sur la flotte) posé sur claude-ops — sans lui, le cadrage le dit
+> en commentaire au lieu d'échouer en silence.
 
 ---
 
@@ -152,6 +166,7 @@ C'est le cœur de FleetView : deux canaux, selon que le geste demande de l'intel
 | **Relancer un run** | carte / vue projet, bouton « Relancer » | `POST …/runs/:id/rerun-failed-jobs` |
 | **Mettre en veille / archiver / réactiver** | vue projet | écrit `statut` dans `fleet.json` |
 | **Ranger / prioriser une idée** | codex | crée/ferme une issue `idée` |
+| **Cadrer une idée (🪶)** | codex | déclenche `codex-cadrage.yml` sur claude-ops (la session Haiku tourne côté Actions) |
 
 ### Gestes intelligents — lancer une session Claude
 Tu décris **quoi**, le système s'occupe du **comment**. Trois parcours, dans la modale « Demande » :
@@ -161,13 +176,15 @@ Tu décris **quoi**, le système s'occupe du **comment**. Trois parcours, dans l
   **copie** et ouvre claude.ai/code ; tu colles, et tu **discutes** avec Claude comme dans l'app
   desktop — questions/réponses, précisions, allers-retours — jusqu'à la PR. Suivable depuis le
   téléphone, reprenable dans l'app desktop, sur ton abonnement. Le bouton **🌩** est aussi présent
-  directement sur chaque **carte repo** et chaque **item du codex** (lancement en un clic).
+  directement sur chaque **carte repo** et chaque **tâche** de la vue Tâches.
 - **⚡ Issue directe (fire-and-forget)** — pour une demande déjà limpide : l'issue `claude` part
   telle quelle, une **session GitHub Actions** démarre seule, machine éteinte, et la PR revient
   dans l'interface. **Le modèle** est au choix : **Sonnet** (défaut), **Haiku** (mécanique, éco),
   **Opus**/**Fable** (gros chantier) — un label (`claude:haiku`…) que le workflow du kit traduit.
-- **💡 Codex** — pas maintenant : range l'idée dans la boîte (avec sa priorité), relançable plus
-  tard d'un clic (🌩 en session cloud, 🚀 en issue directe).
+- **💡 Codex** — pas maintenant : range l'idée dans la boîte (avec sa priorité). Elle sera
+  **cadrée puis promue au backlog** automatiquement (chaque matin, ou tout de suite via 🪶) ;
+  le lancement se fait ensuite depuis la vue **Tâches** (⚡ ou 🌩) — jamais depuis une idée
+  non cadrée.
 
 **Interactif ou fire-and-forget ?** La session cloud est une **conversation** — le bon canal
 quand il faut cadrer, préciser, répondre à des questions. L'issue directe est un **envoi sans
@@ -192,7 +209,7 @@ liste, deux surfaces.
 ### Le cycle complet d'une demande
 ```
 Session cloud (interactif) :
-   Toi : 🌩 sur un repo / une idée ─▶ prompt de cadrage copié, claude.ai/code s'ouvre
+   Toi : 🌩 sur un repo / une tâche ─▶ prompt de cadrage copié, claude.ai/code s'ouvre
      │
    Toi ⇄ Claude : vous cadrez et discutez dans la session (mobile ou desktop)
      │
@@ -200,6 +217,11 @@ Session cloud (interactif) :
 
 Issue directe (fire-and-forget) :
    Toi : ⚡ "améliore X" ─▶ issue claude ─▶ session Actions ─▶ PR ─▶ ✓ Merger
+
+Idée du codex :
+   Toi : 💡 idée en vrac ─▶ cadrage auto (chaque matin, ou 🪶) ─▶ item 📱 au BACKLOG.md du projet
+     │        (floue : questions 🪶 sur l'issue · ⏳ à préciser → tu réponds → promue)
+   Toi : ⚡ ou 🌩 depuis la vue Tâches, quand tu décides de la lancer
 ```
 
 ---
