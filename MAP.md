@@ -3,7 +3,7 @@
 ## Quoi
 
 **FleetView** est un tableau de bord statique 100 % vanilla JS pour orchestrer une flotte GitHub. 
-Il affiche les états en temps réel (à débloquer/session en cours/attente/calme), un codex d'idées priorisées, lance des sessions Claude avec cadrage, notifications ntfy/natives cliquables, journal de run en direct, et alerte quota API — zéro backend, zéro dépendance, le navigateur parle directement à l'API GitHub.
+Il affiche les états en temps réel (à débloquer/session en cours/attente/calme), un codex d'idées priorisées, lance des sessions Claude (cloud interactive via claude.ai/code, ou issue directe fire-and-forget via Actions), notifications ntfy/natives cliquables, journal de run en direct, et alerte quota API — zéro backend, zéro dépendance, le navigateur parle directement à l'API GitHub.
 
 ## Arborescence annotée
 
@@ -17,7 +17,7 @@ icon.svg                Marque vitruvienne (cercle + carré)
 icon-*.png, maskable-*.png, apple-touch-icon.png    Icônes générées (ne pas éditer à la main)
 .mcp.json               Config MCP : intégration serveur GitHub via HTTP (token env GITHUB_TOKEN)
 README.md               Page d'accueil : pitch rapide, installation express
-docs/GUIDE.md           Guide complet : concepts, usage, sécurité, archi, protocole cadrage
+docs/GUIDE.md           Guide complet : concepts, usage, sécurité, archi, lanceur cloud + issue directe
 scripts/verify.mjs      Vérification : serveur HTTP natif (pas npx serve), teste démarrage et syntaxe
 scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après modif : node scripts/icons.mjs)
 .github/workflows/      Stubs kit : claude.yml (dispatch), map.yml, pages.yml (déploiement)
@@ -32,7 +32,8 @@ scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après
 | Nouveau thème | `styles.css` | Ajouter `html[data-fv-theme="nom"]` + vars CSS |
 | Modifier l'API GitHub | `app.js:gh()` | Fonction wrapper (headers, retry, erreurs, quota) |
 | Notifications ntfy | `app.js:notifyNtfy()` + index.html settings | Sujet localStorage, handlers cliquables, testable |
-| Protocole cadrage | `app.js:~800` | Parse issue phase 1 (spécif) / phase 2 (après GO) |
+| Lanceur session cloud | `app.js:composeCloudPrompt()`/`launchCloud()` | Compose un prompt de cadrage, le copie, ouvre claude.ai/code (interactif) |
+| Issue directe (Actions) | `app.js:createRequest()`/`directBody()` | Crée l'issue `claude` (fire-and-forget), déclencheur `@claude` du kit |
 | Journal de run | `app.js:renderLog()` + `styles.css .log` | Actualisation ~4,5s pendant run, lien vers logs bruts |
 | Changer l'icône | `icon.svg` puis `node scripts/icons.mjs` | Édite SVG, régénère PNG (192, 512, maskable, apple) |
 
@@ -57,7 +58,7 @@ node scripts/verify.mjs          # Test : serveur HTTP natif, vérifie réponse
 
 - **Public repo** : GitHub Pages (gratuit) → ne JAMAIS commiter token, URL ntfy, data privée. Tout vient de l'API à l'exécution.
 - **Labels dynamiques** : `ensureLabel()` crée labels à la volée (`claude`, `idée`, `P1-P3`, etc.) — ne pas supposer leur existence.
-- **Cadrage 2 phases** : issue `claude`+`cadrage` → spécifier en commentaire (phase 1), implémenter après commentaire « GO » (phase 2). Tester les deux avant de reformuler.
+- **Deux canaux de lancement** : session **cloud** (interactif, claude.ai/code — prompt composé, copié, ouvert ; pas d'API pour pré-remplir, geste copier→coller) et **issue directe** (fire-and-forget, session Actions → PR). Le protocole cadrage 2 phases (label `cadrage`, « GO ») a été retiré — ne pas le réintroduire.
 - **fleet.json dual-write** : aussi écrit par `scripts/fleet.mjs` (claude-ops) — modifier UNIQuement `statut`, préserver reste, gérer conflit `sha` (re-fetch avant PUT).
 - **Notifications ntfy** : sujet localStorage, jamais commité. Handlers cliquables passent `?repo=<id>` et scrollent vers le bon projet. Test via bouton Tester.
 - **Journal de run** : actualise ~4,5s tant que `run.status !== 'completed'`. Logs bruts indisponibles côté client (CORS) → lien vers GitHub Actions.

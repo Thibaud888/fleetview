@@ -44,7 +44,7 @@ Au premier lancement, FleetView demande un token pour parler à l'API GitHub en 
    | Permission | Niveau | Pourquoi |
    |---|---|---|
    | Contents | Read & write | Lire/écrire `fleet.json` (cycle de vie), copier les fichiers du kit |
-   | Issues | Read & write | Lire les issues `claude`/`idée`, en créer, commenter (cadrage) |
+   | Issues | Read & write | Lire les issues `claude`/`idée`, en créer, commenter la session |
    | Pull requests | Read & write | Lire les PRs + checks, merger, demander des changements |
    | Actions | Read & write | Lire l'état des runs, en relancer un |
    | Metadata | Read | Obligatoire (dépendance implicite des autres) |
@@ -81,7 +81,7 @@ utile pour découvrir l'interface sans token, ou faire une capture. Aucune actio
 
 - **Synthèse (topbar)** — le compte des états qui comptent + le nombre d'idées en attente.
 - **À traiter** — la liste, en tête, de ce qui réclame *ta* main : cron en échec, PR à
-  décider, question de cadrage de Claude. Si c'est vide, tout roule. « Examiner » ouvre le projet.
+  décider, question de Claude sur une issue. Si c'est vide, tout roule. « Examiner » ouvre le projet.
 - **L'atelier** — une carte par projet actif. Filtres : Tous / À débloquer / En session /
   En attente / Calmes / En veille. **Clique une carte** pour n'ouvrir que ce projet.
 - **Vue projet** — le détail d'un seul repo : ses lignes d'état, sa PR (avec merge), le
@@ -102,7 +102,7 @@ Chaque projet a un **état** calculé à chaque relevé, dans cet ordre de prior
 |---|---|---|
 | **À débloquer** | rouge | Cron en échec, checks de PR au rouge, ou issue sans nouvelles (ni PR, ni commentaire, ni session) depuis > 2 h |
 | **En session** | bleu | Une session Claude tourne (ou une PR est en cours de vérification) |
-| **En attente** | orange | Une PR attend ta décision, ou Claude attend ta réponse de cadrage |
+| **En attente** | orange | Une PR attend ta décision, ou Claude attend ta réponse sur une issue |
 | **Calme** | vert | Rien en cours |
 
 C'est le pire état parmi ses signaux qui l'emporte : un projet avec un cron en échec **et**
@@ -144,47 +144,43 @@ C'est le cœur de FleetView : deux canaux, selon que le geste demande de l'intel
 | **Mettre en veille / archiver / réactiver** | vue projet | écrit `statut` dans `fleet.json` |
 | **Ranger / prioriser une idée** | codex | crée/ferme une issue `idée` |
 
-### Gestes intelligents — une session Claude
+### Gestes intelligents — lancer une session Claude
 Tu décris **quoi**, le système s'occupe du **comment**. Trois parcours, dans la modale « Demande » :
 
-- **🪶 Cadrer puis lancer (recommandé)** — Claude reçoit ta demande brute, la **reformule en
-  spécification** (contexte, objectif, critères de done), pose ses questions **dans l'interface**,
-  et attend. Tu réponds dans le fil de discussion ; quand c'est clair, tu cliques **GO** et il
-  implémente. C'est le parcours par défaut : une demande en vrac ressort propre et cadrée avant
-  la moindre ligne de code.
-- **⚡ Lancer direct** — pour une demande déjà limpide : l'issue part telle quelle, la session
-  démarre, la PR revient dans l'interface.
-- **💡 Codex** — pas maintenant : range l'idée dans la boîte (avec sa priorité), lançable plus
-  tard d'un clic sur 🚀.
+- **🌩 Session cloud (recommandé pour cadrer)** — ouvre une **session interactive claude.ai/code**.
+  FleetView compose un prompt de cadrage complet (repo ciblé, tâche, règles de la flotte), le
+  **copie** et ouvre claude.ai/code ; tu colles, et tu **discutes** avec Claude comme dans l'app
+  desktop — questions/réponses, précisions, allers-retours — jusqu'à la PR. Suivable depuis le
+  téléphone, reprenable dans l'app desktop, sur ton abonnement. Le bouton **🌩** est aussi présent
+  directement sur chaque **carte repo** et chaque **item du codex** (lancement en un clic).
+- **⚡ Issue directe (fire-and-forget)** — pour une demande déjà limpide : l'issue `claude` part
+  telle quelle, une **session GitHub Actions** démarre seule, machine éteinte, et la PR revient
+  dans l'interface. **Le modèle** est au choix : **Sonnet** (défaut), **Haiku** (mécanique, éco),
+  **Opus**/**Fable** (gros chantier) — un label (`claude:haiku`…) que le workflow du kit traduit.
+- **💡 Codex** — pas maintenant : range l'idée dans la boîte (avec sa priorité), relançable plus
+  tard d'un clic (🌩 en session cloud, 🚀 en issue directe).
 
-**Le modèle** est au choix à chaque demande : **Sonnet** (code courant, défaut), **Haiku**
-(mécanique, éco), **Opus** (conception, gros chantier), **Fable** (le plus capable). Le choix
-pose un label (`claude:haiku`, `claude:opus`, `claude:fable`) que le workflow du kit traduit
-en modèle réel.
+**Interactif ou fire-and-forget ?** La session cloud est une **conversation** — le bon canal
+quand il faut cadrer, préciser, répondre à des questions. L'issue directe est un **envoi sans
+retour** — idéale pour un lot d'items déjà spécifiés qui avancent pendant que tu fais autre chose.
+Les deux tournent sur ton **abonnement**, pas sur des crédits API.
 
-**Comment le dialogue reste dans l'interface :** une session Claude tourne dans GitHub Actions
-et « parle » par **commentaires d'issue**. FleetView lit ces commentaires et affiche le fil ;
-tes réponses sont postées comme commentaires `@claude …` qui relancent la session. GitHub n'est
-qu'un **bus de messages** ; toi, tu ne quittes jamais l'atelier. (Un lien « au besoin : GitHub ↗ »
-reste disponible dans la vue projet pour les rares cas où tu veux vraiment voir le dépôt.)
-
-> 💰 **1 commentaire = 1 lot.** Chaque réponse `@claude` relance une **session Actions
-> complète** (re-clone du repo + relecture de tout le fil) : c'est le budget API qui paie
-> chaque réplique. Groupe toutes tes remarques et réponses en **un seul commentaire** avant
-> d'envoyer — la session relit le fil entier de toute façon, un lot cohérent donne un
-> meilleur résultat qu'une rafale de petits messages, pour plusieurs fois moins de budget.
+> 💰 **Sur une issue directe : 1 commentaire = 1 lot.** Chaque réponse `@claude` relance une
+> **session Actions complète** (re-clone du repo + relecture de tout le fil), payée à chaque
+> réplique. Pour de la discussion, préfère la **session cloud** ; sur une issue Actions, groupe
+> tes remarques en **un seul commentaire**.
 
 ### Le cycle complet d'une demande
 ```
-Toi : "améliore X"  ─▶  issue claude+cadrage créée
-                         │
-   Claude ◀─────────────┘  lit MAP.md/CLAUDE.md, poste sa spécification + questions
+Session cloud (interactif) :
+   Toi : 🌩 sur un repo / une idée ─▶ prompt de cadrage copié, claude.ai/code s'ouvre
      │
-   Toi : réponds dans le fil ──▶ @claude …
+   Toi ⇄ Claude : vous cadrez et discutez dans la session (mobile ou desktop)
      │
-   Toi : "GO" ───────────────▶  Claude implémente : branche, vérifie, ouvre la PR
-                                   │
-   Toi : ✓ Merger  ◀─────────────┘  PR + checks affichés dans la vue projet
+   Claude : branche, vérifie, ouvre la PR ─▶ elle apparaît dans la vue projet FleetView
+
+Issue directe (fire-and-forget) :
+   Toi : ⚡ "améliore X" ─▶ issue claude ─▶ session Actions ─▶ PR ─▶ ✓ Merger
 ```
 
 ---
@@ -285,7 +281,8 @@ Trois fichiers, aucune dépendance JS, aucun build.
 | Changer le calcul d'un état | `buildModel()` dans `app.js` |
 | Ajouter/modifier une action | l'objet `ACTIONS` et `createRequest()` / `setLifecycle()` … |
 | Nouveau thème | un bloc `html[data-fv-theme="nom"]{ … }` dans `styles.css` + une `<option>` |
-| Protocole de cadrage | `cadrageBody()` (les 2 phases) + le déclencheur `@claude` du workflow du kit |
+| Lanceur de session cloud | `composeCloudPrompt()` + `launchCloud()` — compose le prompt, le copie, ouvre claude.ai/code |
+| Issue directe (Actions) | `createRequest()` + `directBody()` + le déclencheur `@claude` du workflow du kit |
 
 **Pièges** (voir aussi le haut de `MAP.md` et `CLAUDE.md`) :
 - Les labels sont créés à la volée par `ensureLabel()` — ne pas supposer qu'ils existent.
@@ -302,7 +299,8 @@ Trois fichiers, aucune dépendance JS, aucun build.
 | Écran de config qui revient / bandeau « token refusé » | Token expiré ou permissions insuffisantes — recrée-le avec les 6 permissions du §2. |
 | Un projet n'apparaît pas | Absent de `fleet.json` : lance `node scripts/fleet.mjs` sur claude-ops. |
 | « Lancer » ne déclenche rien côté GitHub | Le repo cible n'a pas le workflow `claude.yml`, ou le secret `CLAUDE_CODE_OAUTH_TOKEN` manque, ou « Actions crée des PRs » est désactivé. |
-| Le dialogue de cadrage reste vide | La session n'a pas encore commenté — patiente un cycle de relevé (~1-2 min) ou vérifie le run Actions. |
+| Le dialogue d'une issue directe reste vide | La session Actions n'a pas encore commenté — patiente un cycle de relevé (~1-2 min) ou vérifie le run Actions. |
+| Le bouton 🌩 n'ouvre pas de session | Le prompt est copié mais le navigateur bloque les pop-ups : autorise-les, ou va sur claude.ai/code et colle (Ctrl/Cmd+V). Si la copie a échoué, une fenêtre affiche le prompt à copier à la main. |
 | Polices « fades » au premier affichage | Google Fonts pas encore chargé (réseau lent) ; le fallback s'affiche puis bascule. |
 
 ---

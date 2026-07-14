@@ -7,8 +7,9 @@ GitHub.
 - **États en un coup d'œil** : à débloquer · en session · en attente · calme — et surtout, un
   bandeau **« À traiter »** qui isole ce qui réclame ta main.
 - **Codex des idées** : une boîte à idées priorisée (P1/P2/P3), qui ne coûte rien tant qu'elle dort.
-- **Lancer une demande** : tu décris quoi, Claude cadre puis implémente — le dialogue reste
-  dans l'interface (les sessions Actions « parlent » par commentaires d'issue que FleetView relit).
+- **Lancer une demande** : **🌩 session cloud** interactive (FleetView compose le prompt de
+  cadrage, le copie et ouvre claude.ai/code — tu discutes puis reprends sur mobile ou desktop),
+  ou **⚡ issue directe** fire-and-forget (session GitHub Actions → PR, machine éteinte).
 - **Gestes directs** : merger une PR, relancer un run, mettre un projet en veille/archivé —
   appel API instantané, zéro session.
 - **Cycle de vie** : *actif* / *veille* (dev en pause mais pannes surveillées) / *archivé*.

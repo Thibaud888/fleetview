@@ -134,7 +134,7 @@
       </div>
       <div class="field">
         <label for="f-desc">Détails <small>— tout ce que tu as en tête, même en vrac</small></label>
-        <textarea id="f-desc" placeholder="Le cadrage remettra tout au propre de toute façon."></textarea>
+        <textarea id="f-desc" placeholder="On mettra tout au propre dans la session de toute façon."></textarea>
         <div class="mic-row">
           <button type="button" class="btn btn-mic" data-mic="#f-desc" data-mic-interim="#f-desc-interim" aria-label="Dicter les détails" title="Dicter les détails">🎙️</button>
           <span class="mic-interim" id="f-desc-interim" hidden></span>
@@ -143,10 +143,10 @@
       <div class="field">
         <label>Parcours</label>
         <div class="radio-row">
-          <label class="radio-card"><input type="radio" name="f-when" value="cadrage" checked>
-            <span><b>🪶 Cadrer puis lancer</b><small>Claude reformule, pose ses questions ici, tu valides, il implémente — recommandé</small></span></label>
+          <label class="radio-card"><input type="radio" name="f-when" value="cloud" checked>
+            <span><b>🌩 Session cloud</b><small>conversation interactive sur claude.ai/code — cadrer puis implémenter ensemble, suivable sur mobile ; recommandé</small></span></label>
           <label class="radio-card"><input type="radio" name="f-when" value="direct">
-            <span><b>⚡ Lancer direct</b><small>l'issue part telle quelle — pour les demandes déjà limpides</small></span></label>
+            <span><b>⚡ Issue directe</b><small>fire-and-forget : l'issue part telle quelle, session Actions → PR — pour les demandes déjà limpides</small></span></label>
           <label class="radio-card" id="opt-box"><input type="radio" name="f-when" value="box">
             <span><b>💡 Codex</b><small>rangée dans la boîte, lançable plus tard d'un clic</small></span></label>
         </div>
@@ -182,7 +182,7 @@
     </div>
     <div class="modal-foot">
       <span class="poc-note" id="modal-note"></span>
-      <button type="submit" class="btn btn-primary" id="f-submit">Cadrer avec Claude</button>
+      <button type="submit" class="btn btn-primary" id="f-submit">🌩 Ouvrir la session cloud</button>
     </div>
   </form>
 </dialog>

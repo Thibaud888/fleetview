@@ -1,7 +1,8 @@
 # CLAUDE.md — fleetview
 
 > Tour de contrôle de la flotte : suivi des états de tous les repos, boîte à idées priorisée,
-> lancement de sessions Claude (cadrage puis implémentation) — sans ouvrir GitHub.
+> lancement de sessions Claude — **cloud interactive** (claude.ai/code) pour cadrer/discuter, ou
+> **issue directe** (Actions, fire-and-forget) — sans ouvrir GitHub.
 
 ## Règles de travail (flotte)
 - **Lis `MAP.md` avant toute exploration** ; n'explore que ce qu'elle ne couvre pas.
@@ -31,10 +32,13 @@
 ## Pièges connus
 - Repo destiné à être **public** (GitHub Pages, plan gratuit) : ne JAMAIS commiter de token,
   d'URL ntfy ou de contenu privé de la flotte — tout vient de l'API à l'exécution.
-- Les labels (`claude`, `claude:opus`…, `idée`, `P1-P3`, `cadrage`) sont créés à la volée par
+- Les labels (`claude`, `claude:opus`…, `idée`, `P1-P3`) sont créés à la volée par
   `ensureLabel()` ; ne pas supposer qu'ils existent.
-- Le protocole **cadrage** repose sur le corps de l'issue (phase 1 : spécifier en commentaire,
-  ne pas coder ; phase 2 : après « GO ») et sur le déclencheur `@claude` du kit — ne pas le
-  reformuler sans tester les deux phases.
+- Deux canaux de lancement, distincts : **session cloud** (`composeCloudPrompt()`+`launchCloud()`
+  → compose un prompt, le copie, ouvre claude.ai/code ; interactif, sur l'abonnement — pas d'API
+  publique pour pré-remplir une session, le geste est copier→coller) et **issue directe**
+  (`createRequest()`+`directBody()` → issue `claude`, déclencheur `@claude` du kit, session
+  Actions → PR). Le protocole cadrage 2 phases (label `cadrage`, « GO ») a été **retiré** — ne pas
+  le réintroduire ; l'interactif passe désormais par la session cloud.
 - `fleet.json` est aussi écrit par `scripts/fleet.mjs` (claude-ops) : ne toucher que le champ
   `statut`, préserver le reste, et gérer le conflit de `sha` (re-fetch avant PUT).
