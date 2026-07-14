@@ -165,6 +165,9 @@ code{font-family:var(--font-mono); font-size:.82em; background:var(--surface-2);
 }
 .btn-mini:hover{background:var(--accent-soft)}
 .btn-mini:disabled{opacity:.5; cursor:default}
+/* Les 🌩 « Session cloud » sont de vrais <a> (pour ouvrir l'app Claude sur mobile) mais stylés
+   comme des boutons : on neutralise le soulignement de lien au survol. */
+a.btn:hover, a.btn-mini:hover, a.idea-launch:hover{text-decoration:none}
 .theme-select{
   border:1px solid var(--line-strong); background:var(--raised); color:var(--ink);
   border-radius:var(--r-sm); padding:6px 8px; font-family:var(--font-mono); font-size:12px; max-width:132px;
