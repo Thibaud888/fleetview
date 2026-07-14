@@ -84,8 +84,9 @@ utile pour découvrir l'interface sans token, ou faire une capture. Aucune actio
   décider, question de Claude sur une issue. Si c'est vide, tout roule. « Examiner » ouvre le projet.
 - **L'atelier** — une carte par projet actif. Filtres : Tous / À débloquer / En session /
   En attente / Calmes / En veille. **Clique une carte** pour n'ouvrir que ce projet.
-- **Vue projet** — le détail d'un seul repo : ses lignes d'état, sa PR (avec merge), le
-  dialogue avec Claude, ses idées, ses chroniques, et les actions de cycle de vie.
+- **Vue projet** — le détail d'un seul repo : ses lignes d'état, sa PR (avec merge), les
+  dialogues avec Claude (un bloc par issue `claude` ouverte, chacun avec son champ de
+  réponse), ses idées, ses chroniques, et les actions de cycle de vie.
 - **Tâches de la flotte** — la lecture agrégée des **`BACKLOG.md` de tous les repos actifs**
   (les tâches cadrées, distinctes des idées du codex). Elle se charge **à la demande**
   (bouton « ⟳ Lire », ou premier tap sur l'onglet Tâches en mobile) pour ne pas consommer
@@ -333,8 +334,6 @@ lanceur de session cloud). Ce qui reste, dans le [BACKLOG](../BACKLOG.md) :
 - **Registre rafraîchissable depuis l'interface** — un bouton « Rafraîchir le registre » + un
   déclenchement automatique en fin de « Nouveau projet » (via un workflow `fleet-refresh.yml` côté
   claude-ops), pour qu'un projet créé apparaisse dans l'atelier sans passer par un terminal.
-- **Tous les fils de dialogue dans la vue projet** — afficher un bloc par issue `claude` ouverte
-  (aujourd'hui `buildModel` n'en garde qu'un), pour pouvoir répondre à chacune.
 - **Mobile : « À traiter » visible partout** — un badge sur l'onglet Atelier + l'heure du dernier
   relevé lisible depuis Codex/Chroniques.
 

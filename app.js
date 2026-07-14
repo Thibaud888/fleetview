@@ -46,7 +46,8 @@ const IDEA_CATS = {
 
 let model = null;          // { repos:[], ideas:[], attention:[], feed:[], notify:[] }
 let fleetFile = null;      // { json, sha }
-let ui = { filter:"all", openRepo:null, lastSync:null, loading:false, threadBig:false };
+// threadBig : n° de l'issue dont le fil est en plein écran (null = aucun) — plusieurs fils peuvent coexister.
+let ui = { filter:"all", openRepo:null, lastSync:null, loading:false, threadBig:null };
 let ideaLaunchCtx = null;  // idée en cours de lancement (depuis le codex)
 let ideaUI = { repoFilter:"all", open:null, edit:null }; // état du codex (filtre projet, idée dépliée/éditée)
 const labelCache = new Set();
@@ -290,7 +291,7 @@ function buildModel(fleet, D){
   for(const fr of fleet){
     const id=fr.repo;
     const life = isArchived(fr.statut)?"archive":(isVeille(fr.statut)?"veille":"actif");
-    const lines=[]; let state="calm"; let lastTs=null; let pr=null; let threadIssue=null;
+    const lines=[]; let state="calm"; let lastTs=null; let pr=null; const threadIssues=[];
     const bump=(s)=>{ if(STATES[s].order<STATES[state].order) state=s; };
     const seen=(iso)=>{ if(iso && (!lastTs||iso>lastTs)) lastTs=iso; };
     const runs = D.runsByRepo[id]||[];
@@ -315,27 +316,27 @@ function buildModel(fleet, D){
       } else if(claudeRunning){
         bump("info");
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session Actions en cours`, small:timeAgo(is.updated_at), act:{id:"gh-issue", n:is.number, label:"Suivre"}});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, body:is.body};
+        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
       } else if(lastC && lastC.user.login!==OWNER){
         bump("warn");
         lines.push({c:"warn", t:`Issue #${is.number} « ${is.title} » — réponse de Claude à lire`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
         attention.push({c:"warn", repo:id, t:`Claude attend ta réponse sur « ${is.title} »`, small:timeAgo(lastC.created_at)});
         notify.push({key:`q:${id}#${is.number}:${lastC.id||lastC.created_at}`, kind:"q",
           title:`${id} — Claude attend ta réponse`, msg:is.title, repo:id, tag:"speech_balloon", prio:4});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, body:is.body};
+        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
       } else if(idleH>2){
         bump("crit");
         lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — sans nouvelles depuis ${Math.round(idleH)} h (session en échec ?)`, act:{id:"relabel", n:is.number, label:"Relancer"}});
         attention.push({c:"crit", repo:id, t:`« ${is.title} » : sans nouvelles depuis ${Math.round(idleH)} h`});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, body:is.body};
+        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
       } else if(lastC){
         bump("info");
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — réponse envoyée, la session reprend`, small:timeAgo(lastC.created_at)});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, body:is.body};
+        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
       } else {
         bump("info");
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session en attente de démarrage`, small:timeAgo(is.created_at)});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, body:is.body};
+        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
       }
       feed.push({ts:is.created_at, c:"info", repo:id, txt:`Issue #${is.number} « ${is.title} » ouverte.`});
     }
@@ -400,7 +401,7 @@ function buildModel(fleet, D){
     if(!lines.length) lines.push({c:"ok", t:"Rien en cours"});
     repos.push({
       id, type: fr.type + (fr.kit_version?` · kit ${fr.kit_version}`:""), life, state,
-      lines, last: lastTs?timeAgo(lastTs):"—", lastTs, pr, threadIssue, lastRun,
+      lines, last: lastTs?timeAgo(lastTs):"—", lastTs, pr, threadIssues, lastRun,
       notes: fr.notes||"", url:`https://github.com/${OWNER}/${id}`,
     });
   }
@@ -441,8 +442,9 @@ function demoModel(){
     repos:[
       {id:"quiz-capitales", type:"cron-node", life:"actif", state:"crit", last:"il y a 40 min", url:"#",
         lines:[L("crit","publish-shorts.yml — 2 échecs consécutifs","il y a 40 min",{id:"demo",label:"Relancer"}), L("ok","retry-reels.yml — OK","cette nuit")]},
-      {id:"bulletins-viz", type:"static · kit 1.0.0", life:"actif", state:"info", last:"il y a 12 min", url:"#",
-        lines:[L("info","Issue #18 « Export PDF » — session Actions en cours","12 min",{id:"open-thread",n:18,label:"Suivre"})],
+      {id:"bulletins-viz", type:"static · kit 1.0.0", life:"actif", state:"warn", last:"il y a 12 min", url:"#",
+        lines:[L("info","Issue #18 « Export PDF » — session Actions en cours","12 min",{id:"open-thread",n:18,label:"Suivre"}),
+               L("warn","Issue #21 « Moyenne pondérée par coefficient » — réponse de Claude à lire","il y a 25 min",{id:"open-thread",n:21,label:"Répondre"})],
         lastRun:{id:1, name:"Export PDF — session #18", wf:"claude.yml", status:"in_progress",
           conclusion:null, running:true, url:"#", started:new Date(Date.now()-4*60000).toISOString()},
         demoJobs:[{name:"claude", status:"in_progress", conclusion:null, steps:[
@@ -452,11 +454,17 @@ function demoModel(){
           {number:4,name:"Session Claude Code (implémentation)",status:"in_progress",conclusion:null},
           {number:5,name:"Vérification (verify.mjs)",status:"queued",conclusion:null},
           {number:6,name:"Ouverture de la PR",status:"queued",conclusion:null}]}],
-        threadIssue:{num:18, title:"Export PDF", body:"Ajouter un bouton pour exporter le bulletin courant en PDF.\n\n_Créée depuis FleetView._", comments:[
-          {user:{login:OWNER}, body:"Ajouter un bouton pour exporter le bulletin courant en PDF."},
-          {user:{login:"claude-bot"}, body:"## Spécification\n\n**Objectif** : bouton « Exporter en PDF » dans la barre du bulletin.\n\n- Rendu client via `window.print` + feuille `@media print` dédiée — aucune dépendance\n- Critères de done :\n- [x] le PDF reprend le graphe et le tableau\n- [ ] sans la navigation\n\nJ'enchaîne l'implémentation."},
-          {user:{login:"claude-bot"}, body:"Fait : bouton ajouté, styles d'impression en place, **PR #19 ouverte** (Closes #18).\n\n```bash\nnode scripts/verify.mjs   # VERIFY OK\n```\nVérifié : l'aperçu d'impression montre le bulletin seul."},
-        ]}},
+        threadIssues:[
+          {num:18, title:"Export PDF", body:"Ajouter un bouton pour exporter le bulletin courant en PDF.\n\n_Créée depuis FleetView._", comments:[
+            {user:{login:OWNER}, body:"Ajouter un bouton pour exporter le bulletin courant en PDF."},
+            {user:{login:"claude-bot"}, body:"## Spécification\n\n**Objectif** : bouton « Exporter en PDF » dans la barre du bulletin.\n\n- Rendu client via `window.print` + feuille `@media print` dédiée — aucune dépendance\n- Critères de done :\n- [x] le PDF reprend le graphe et le tableau\n- [ ] sans la navigation\n\nJ'enchaîne l'implémentation."},
+            {user:{login:"claude-bot"}, body:"Fait : bouton ajouté, styles d'impression en place, **PR #19 ouverte** (Closes #18).\n\n```bash\nnode scripts/verify.mjs   # VERIFY OK\n```\nVérifié : l'aperçu d'impression montre le bulletin seul."},
+          ]},
+          // Second fil sur le même repo : illustre les dialogues empilés (un bloc par issue ouverte).
+          {num:21, title:"Moyenne pondérée par coefficient", body:"Le bulletin devrait pondérer la moyenne par les coefficients des matières.\n\n_Créée depuis FleetView._", comments:[
+            {user:{login:"claude-bot"}, body:"Deux lectures possibles : pondérer **la moyenne générale** seulement, ou aussi les moyennes par trimestre ?\n\nJe pars sur les deux sauf contre-ordre — dis-moi."},
+          ]},
+        ]},
       {id:"talk-show-oral", type:"service-node", life:"actif", state:"warn", last:"hier", url:"#",
         pr:{num:15,title:"Lecture audio iOS",checks:"checks ✓ 3/3",files:4,add:118,del:22,body:"Débloque l'AudioContext au premier geste utilisateur. Résout l'issue #12."},
         lines:[L("warn","PR #15 « Lecture audio iOS » — checks ✓, attend ta décision","depuis 15 h",{id:"open-pr",n:15,label:"Examiner"})]},
@@ -473,6 +481,7 @@ function demoModel(){
     ],
     attention:[
       {c:"crit",repo:"quiz-capitales",t:"publish-shorts en échec ×2",small:"il y a 40 min"},
+      {c:"warn",repo:"bulletins-viz",t:"Claude attend ta réponse sur « Moyenne pondérée par coefficient »",small:"il y a 25 min"},
       {c:"warn",repo:"talk-show-oral",t:"PR #15 attend ta décision",small:"depuis 15 h"},
     ],
     feed:[
@@ -747,7 +756,8 @@ function renderDetail(){
   // re-render toute la vue — on capture avant, on restaure après si c'est le même repo,
   // sinon ce qu'on tape serait effacé toutes les 2 minutes.
   const draft = renderDetail._repo===r.id ? {
-    thread: ($("#thread-reply")||{}).value||"",
+    // Un brouillon par fil (textarea id="thread-reply-<n°>") : plusieurs dialogues peuvent coexister.
+    threads: Object.fromEntries([...document.querySelectorAll('textarea[id^="thread-reply-"]')].map(t=>[t.id, t.value])),
     pr: ($("#pr-reply-text")||{}).value||"",
     prOpen: !!($("#pr-reply") && !$("#pr-reply").hidden),
     focusId: document.activeElement ? document.activeElement.id : "",
@@ -778,36 +788,41 @@ function renderDetail(){
       </div>
     </div>`:"";
 
-  const th=r.threadIssue;
-  // Le fil s'ouvre sur TA demande (corps de l'issue) : sans elle, le dialogue
-  // commençait par la réponse de Claude, sans la question.
-  const req=th?requestFromIssueBody(th.body):"";
-  const msgs=th?[...(req?[{user:{login:OWNER}, body:req}]:[]), ...(th.comments||[])]:[];
-  const threadBar=msgs.length>1?`
+  // Un bloc Dialogue PAR issue claude ouverte (empilés) : avant, seul le premier fil
+  // rencontré était visible — les autres issues étaient muettes depuis la vue projet.
+  const threads=r.threadIssues||[];
+  const threadBlocks=threads.map(th=>{
+    // Le fil s'ouvre sur TA demande (corps de l'issue) : sans elle, le dialogue
+    // commençait par la réponse de Claude, sans la question.
+    const req=requestFromIssueBody(th.body);
+    const msgs=[...(req?[{user:{login:OWNER}, body:req}]:[]), ...(th.comments||[])];
+    const big=ui.threadBig===th.num;
+    const threadBar=msgs.length>1?`
       <div class="thread-bar">
         <span class="count num">${msgs.length} messages</span>
         <button class="btn-mini" data-act="thread-top">↥ Début</button>
         <button class="btn-mini" data-act="thread-bottom">↧ Dernier</button>
       </div>`:"";
-  const threadBlock=th?`
-    <div class="block thread-block${ui.threadBig?" full":""}" id="thread-block">
+    return `
+    <div class="block thread-block${big?" full":""}" data-thread="${th.num}">
       <div class="block-head">
         <span class="eyebrow">Dialogue — issue #${th.num} « ${esc(th.title)} »</span>
-        <button class="btn-mini${ui.threadBig?" on":""}" data-act="thread-big">${ui.threadBig?"✕ Fermer":"⛶ Plein écran"}</button>
+        <button class="btn-mini${big?" on":""}" data-act="thread-big" data-n="${th.num}">${big?"✕ Fermer":"⛶ Plein écran"}</button>
       </div>
       ${threadBar}
-      <div class="thread" id="thread-box">${msgs.map((m,i)=>{
+      <div class="thread">${msgs.map((m,i)=>{
         const mine=m.user.login===OWNER;
         return `<div class="msg ${mine?"":"claude"}"><span class="who">${mine?"Toi":"Claude"} <span class="msg-n">${i+1}</span></span>
           <span class="bubble md">${md(String(m.body||"").replace(/^@claude\s*/i,""))}</span></div>`;
       }).join("")||`<p class="marginalia" style="margin:0">Pas encore de commentaire — la session écrit ici.</p>`}
       </div>
       <div class="reply">
-        <textarea id="thread-reply" placeholder="Répondre à Claude…"></textarea>
-        <button type="button" class="btn btn-mic" data-mic="#thread-reply" title="Dicter">🎙️</button>
+        <textarea id="thread-reply-${th.num}" placeholder="Répondre à Claude…"></textarea>
+        <button type="button" class="btn btn-mic" data-mic="#thread-reply-${th.num}" title="Dicter">🎙️</button>
         <button class="btn" data-act="thread-send" data-n="${th.num}">Envoyer</button>
       </div>
-    </div>`:"";
+    </div>`;
+  }).join("");
 
   const runBlock=r.lastRun?(()=>{
     const rs=runStatusLabel(r.lastRun);
@@ -843,7 +858,7 @@ function renderDetail(){
       <ul class="lines">${r.lines.map(lineHtml).join("")}</ul>
       ${prBlock}
       ${runBlock}
-      ${threadBlock}
+      ${threadBlocks}
       ${relatedIdeas.length?`
       <div class="sub-list">
         <div class="eyebrow"><span class="orn">❧</span>Au codex pour ce projet</div>
@@ -873,17 +888,19 @@ function renderDetail(){
 
   // Restauration des brouillons capturés ci-dessus (même repo re-rendu).
   if(draft){
-    const tr=$("#thread-reply"); if(tr && draft.thread) tr.value=draft.thread;
+    for(const [tid,v] of Object.entries(draft.threads||{})){
+      const el=document.getElementById(tid); if(el && v) el.value=v;
+    }
     const pt=$("#pr-reply-text"); if(pt && draft.pr) pt.value=draft.pr;
     if(draft.prOpen && $("#pr-reply")) $("#pr-reply").hidden=false;
-    if(draft.focusId==="thread-reply"||draft.focusId==="pr-reply-text"){
+    if(draft.focusId.startsWith("thread-reply-")||draft.focusId==="pr-reply-text"){
       const el=document.getElementById(draft.focusId);
       if(el){ el.focus(); const L=el.value.length; try{ el.setSelectionRange(L,L); }catch(_){} }
     }
   }
 
   // Dialogue en plein écran : on fige le défilement de la page derrière.
-  document.body.classList.toggle("thread-full-open", !!(ui.threadBig && th));
+  document.body.classList.toggle("thread-full-open", threads.some(t=>t.num===ui.threadBig));
 
   // Secret Claude : vérification paresseuse (une requête par repo, mise en cache).
   refreshSecretBadge(r.id);
@@ -1363,7 +1380,7 @@ function openDetail(id){
   if(!model || !model.repos.some(x=>x.id===id)) return;
   if(ui.openRepo!==id){
     if(!ui.openRepo) ui.scrollY=window.scrollY; // position dans l'atelier, restaurée au retour
-    ui.openRepo=id; ui.threadBig=false;
+    ui.openRepo=id; ui.threadBig=null;
   }
   document.body.dataset.tab="flotte";
   document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab==="flotte")));
@@ -1425,9 +1442,11 @@ document.addEventListener("click",async(e)=>{
       }
       try{
         switch(b.dataset.act){
-          case "back": ui.openRepo=null; ui.threadBig=false; renderDetail();
+          case "back": ui.openRepo=null; ui.threadBig=null; renderDetail();
             window.scrollTo({top:ui.scrollY||0}); ui.scrollY=0; break;
-          case "open-thread": if(r) openDetail(r.id); break; // le fil est dans la vue projet
+          case "open-thread": if(r){ openDetail(r.id); // le fil est dans la vue projet
+            const tb=document.querySelector(`.thread-block[data-thread="${n}"]`);
+            if(tb) tb.scrollIntoView({block:"start"}); } break;
           case "open-pr": if(r) openDetail(r.id); break;     // le bloc PR aussi
           case "gh-issue": if(r) window.open(`${r.url}/issues/${n}`,"_blank"); break;
           case "merge": if(r){ b.disabled=true; await mergePr(r.id,n); await refresh(); } break;
@@ -1435,13 +1454,14 @@ document.addEventListener("click",async(e)=>{
           case "pr-comment-send": if(r){ const v=$("#pr-reply-text").value.trim(); if(!v)break;
             b.disabled=true; await sendComment(r.id,n,v);
             $("#pr-reply-text").value=""; $("#pr-reply").hidden=true; await refresh(); } break;
-          case "thread-send": if(r){ const v=$("#thread-reply").value.trim(); if(!v)break;
+          case "thread-send": if(r){ const ta=$("#thread-reply-"+n); const v=ta.value.trim(); if(!v)break;
             b.disabled=true; await sendComment(r.id,n,v);
-            $("#thread-reply").value=""; await refresh(); } break;
-          case "thread-big": ui.threadBig=!ui.threadBig; renderDetail();
-            if(ui.threadBig){ const ms=document.querySelectorAll("#thread-box .msg"); if(ms.length) ms[ms.length-1].scrollIntoView({block:"end"}); } break;
-          case "thread-top": { const m=document.querySelector("#thread-box .msg"); if(m) m.scrollIntoView({behavior:"smooth",block:"nearest"}); } break;
-          case "thread-bottom": { const ms=document.querySelectorAll("#thread-box .msg"); if(ms.length) ms[ms.length-1].scrollIntoView({behavior:"smooth",block:"nearest"}); } break;
+            ta.value=""; await refresh(); } break;
+          case "thread-big": ui.threadBig = ui.threadBig===Number(n)?null:Number(n); renderDetail();
+            if(ui.threadBig){ const ms=document.querySelectorAll(`.thread-block[data-thread="${n}"] .msg`); if(ms.length) ms[ms.length-1].scrollIntoView({block:"end"}); } break;
+          // Début/Dernier : scopés au fil dont vient le clic — plusieurs dialogues peuvent être empilés.
+          case "thread-top": { const m=b.closest(".thread-block").querySelector(".msg"); if(m) m.scrollIntoView({behavior:"smooth",block:"nearest"}); } break;
+          case "thread-bottom": { const ms=b.closest(".thread-block").querySelectorAll(".msg"); if(ms.length) ms[ms.length-1].scrollIntoView({behavior:"smooth",block:"nearest"}); } break;
           case "rerun": if(r){ b.disabled=true; await rerunRun(r.id,n); await refresh(); } break;
           case "relabel": if(r){ b.disabled=true;
             await sendComment(r.id,n,"la session ne semble pas avoir abouti — reprends cette issue depuis le début."); await refresh(); } break;
