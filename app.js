@@ -552,7 +552,7 @@ function renderGrid(){
       <ul class="lines">${r.lines.map(lineHtml).join("")}</ul>
       <footer class="card-foot">
         <span class="last">relevé ${esc(r.last)}</span>
-        <button class="btn-mini" data-cloud-repo="${esc(r.id)}" title="Session cloud interactive (claude.ai/code)">🌩 Session</button>
+        <a class="btn-mini" href="https://claude.ai/code" target="_blank" rel="noopener" data-cloud-repo="${esc(r.id)}" title="Session cloud interactive (claude.ai/code)">🌩 Session</a>
         <button class="btn-mini" data-newfor="${esc(r.id)}">＋ Demande</button>
       </footer>
     </article>`;
@@ -608,7 +608,7 @@ function renderIdeas(){
     <div class="idea${open?" open":""}" data-idea="${i.num}">
       <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
       <span class="idea-body" data-idea-toggle="${i.num}" role="button" tabindex="0">${esc(i.t)}<span class="idea-repo">${esc(i.repo)}${i.desc?" · …":""}</span></span>
-      <button class="idea-launch" data-cloud="${i.num}" title="Session cloud interactive (claude.ai/code)">🌩</button>
+      <a class="idea-launch" href="https://claude.ai/code" target="_blank" rel="noopener" data-cloud="${i.num}" title="Session cloud interactive (claude.ai/code)">🌩</a>
       <button class="idea-launch" data-launch="${i.num}" title="Lancer en issue directe (Actions, fire-and-forget)">🚀</button>
     </div>
     ${open?`<div class="idea-more">${edit?ideaEditHtml(i):`
@@ -847,7 +847,7 @@ function renderDetail(){
           <div class="sub-row">
             <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
             <span style="flex:1">${esc(i.t)}</span>
-            <button class="idea-launch" data-cloud="${i.num}" title="Session cloud interactive">🌩</button>
+            <a class="idea-launch" href="https://claude.ai/code" target="_blank" rel="noopener" data-cloud="${i.num}" title="Session cloud interactive">🌩</a>
             <button class="idea-launch" data-launch="${i.num}" title="Lancer en issue directe (Actions, fire-and-forget)">🚀</button>
           </div>`).join("")}
       </div>`:""}
@@ -858,7 +858,7 @@ function renderDetail(){
           <div class="sub-row"><span class="t num">${esc(dayLabel(f.ts))} ${hhmm(f.ts)}</span><span style="flex:1">${esc(f.txt)}</span></div>`).join("")}
       </div>`:""}
       <div class="detail-actions">
-        <button class="btn btn-primary" data-cloud-repo="${esc(r.id)}">🌩 Session cloud</button>
+        <a class="btn btn-primary" href="https://claude.ai/code" target="_blank" rel="noopener" data-cloud-repo="${esc(r.id)}">🌩 Session cloud</a>
         <button class="btn" data-newfor="${esc(r.id)}">＋ Demande</button>
         ${r.life==="actif"?`<button class="btn" data-act="life" data-n="veille">⏸ Mettre en veille</button>`
                           :`<button class="btn" data-act="life" data-n="actif">▶ Réactiver</button>`}
@@ -1110,6 +1110,28 @@ function launchCloud(ctx){
     navigator.clipboard.writeText(text).then(()=>done(true)).catch(()=>done(false));
   else done(false);
 }
+// Variante « lien » des boutons 🌩 : ils sont de vrais <a href="claude.ai/code"> tapés.
+// Sur mobile, un lien réellement tapé est le seul déclencheur fiable des universal/app links
+// (contrairement à window.open) — c'est donc la meilleure chance d'ouvrir l'app Claude plutôt
+// que le navigateur. On copie le prompt DANS le geste, puis on LAISSE le lien s'ouvrir
+// (ni preventDefault, ni window.open : pas de double ouverture).
+function launchCloudFromLink(e, ctx){
+  const text=composeCloudPrompt(ctx);
+  if(demo){ // démo : on n'ouvre pas d'onglet externe, on montre le prompt composé
+    e.preventDefault(); showCloudPrompt(text);
+    toast("Mode démo — voici le prompt qui serait copié puis ouvert dans claude.ai/code.", 6000);
+    return;
+  }
+  if(copyViaTextarea(text)){
+    toast("🌩 Prompt copié — colle-le (Ctrl/Cmd+V) dans la session claude.ai/code qui s'ouvre.", 7000);
+  } else {
+    // Copie synchrone impossible (certains WebViews mobiles) : filet moderne asynchrone,
+    // et on affiche le prompt en repli pour une copie manuelle. Le lien s'ouvre quand même.
+    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(()=>{});
+    toast("🌩 Session ouverte. Si rien ne se colle, le prompt s'affiche ici à copier à la main.", 7000);
+    showCloudPrompt(text);
+  }
+}
 
 /* ================= Notifications ntfy ================= */
 // Push uniquement sur événements actionnables NOUVEAUX (question de Claude, PR prête).
@@ -1295,13 +1317,15 @@ document.addEventListener("click",async(e)=>{
       if(idea){ ideaLaunchCtx=idea; openModal({repo:idea.repo==="flotte"?"flotte":idea.repo,title:idea.t,desc:idea.desc,hideBox:true,parcours:"direct"}); }
       return;
     }
-    // Session cloud interactive : depuis un item du codex (contexte = idée) ou une carte/vue projet.
+    // Session cloud interactive : les 🌩 sont de vrais liens <a> — on copie le prompt et on
+    // laisse le lien s'ouvrir (meilleure chance d'ouvrir l'app Claude sur mobile).
     if(b.dataset.cloud!==undefined){
       const idea=model.ideas.find(i=>i.num===Number(b.dataset.cloud));
-      if(idea) launchCloud({repo:idea.repo, title:idea.t, desc:idea.desc});
+      if(idea) launchCloudFromLink(e, {repo:idea.repo, title:idea.t, desc:idea.desc});
+      else e.preventDefault(); // idée introuvable : ne pas ouvrir claude.ai pour rien
       return;
     }
-    if(b.dataset.cloudRepo!==undefined){ launchCloud({repo:b.dataset.cloudRepo}); return; }
+    if(b.dataset.cloudRepo!==undefined){ launchCloudFromLink(e, {repo:b.dataset.cloudRepo}); return; }
     if(b.dataset.unarchive!==undefined){
       try{ await setLifecycle(b.dataset.unarchive,"actif"); await refresh(); }catch(err){ toast("Échec : "+errMsg(err)); }
       return;
