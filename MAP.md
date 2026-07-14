@@ -31,10 +31,10 @@ scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après
 | Ajouter une colonne UI | `index.html` + `app.js:render*()` | HTML structure + fonction render correspondante |
 | Nouveau thème | `styles.css` | Ajouter `html[data-fv-theme="nom"]` + vars CSS |
 | Modifier l'API GitHub | `app.js:gh()` | Fonction wrapper (headers, retry, erreurs, quota) |
-| Notifications ntfy | `app.js:notifyNtfy()` + index.html settings | Sujet localStorage, handlers cliquables, testable |
+| Notifications ntfy | `app.js:publishNtfy()` + index.html settings | Sujet localStorage, handlers cliquables, testable |
 | Lanceur session cloud | `app.js:composeCloudPrompt()`/`launchCloud()` | Compose un prompt de cadrage, le copie, ouvre claude.ai/code (interactif) |
 | Issue directe (Actions) | `app.js:createRequest()`/`directBody()` | Crée l'issue `claude` (fire-and-forget), déclencheur `@claude` du kit |
-| Journal de run | `app.js:renderLog()` + `styles.css .log` | Actualisation ~4,5s pendant run, lien vers logs bruts |
+| Journal de run | `app.js:renderJournalInto()` + `styles.css .log` | Actualisation ~4,5s pendant run, lien vers logs bruts |
 | Changer l'icône | `icon.svg` puis `node scripts/icons.mjs` | Édite SVG, régénère PNG (192, 512, maskable, apple) |
 
 ## Flux de données

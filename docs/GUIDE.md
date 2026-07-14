@@ -29,7 +29,7 @@ viennent de là : un carnet d'atelier où l'on note, suit et lance le travail.
 
 ### En local
 ```bash
-npx serve -l 4010 .      # puis http://localhost:4010
+npx serve -l 4000 .      # puis http://localhost:4000
 ```
 Aucune installation, aucun build : c'est un site statique.
 
@@ -249,9 +249,10 @@ d'onglets basse. Le token se saisit une fois par appareil.
   ~5 €/mois), exactement comme via `/dispatch`.
 - **Rate limit** : si tu dépasses (peu probable), le relevé échoue proprement avec un bandeau
   et réessaie au cycle suivant. Le relevé auto tourne toutes les 2 min quand l'onglet est ouvert.
-- **Dépendance polices** : les fonts viennent de Google Fonts (chargées une fois puis mises en
-  cache). Hors-ligne, le fallback système prend le relais. Un cache hors-ligne complet est au
-  [BACKLOG](../BACKLOG.md).
+- **Hors-ligne** : le service worker (`sw.js`) pré-cache la coquille (HTML/CSS/JS/icônes) et
+  réaffiche le dernier relevé avec un bandeau « hors ligne » — l'API GitHub, elle, n'est jamais
+  mise en cache. Les polices viennent de Google Fonts (mises en cache après le premier chargement) ;
+  hors-ligne, le fallback système prend le relais.
 
 ---
 
@@ -279,7 +280,7 @@ Trois fichiers, aucune dépendance JS, aucun build.
 | Besoin | Où |
 |---|---|
 | Changer le calcul d'un état | `buildModel()` dans `app.js` |
-| Ajouter/modifier une action | l'objet `ACTIONS` et `createRequest()` / `setLifecycle()` … |
+| Ajouter/modifier une action | le `switch(b.dataset.act)` du gestionnaire de clic + la fonction d'écriture concernée (`createRequest()`, `mergePr()`, `setLifecycle()`, `rerunRun()`…) |
 | Nouveau thème | un bloc `html[data-fv-theme="nom"]{ … }` dans `styles.css` + une `<option>` |
 | Lanceur de session cloud | `composeCloudPrompt()` + `launchCloud()` — compose le prompt, le copie, ouvre claude.ai/code |
 | Issue directe (Actions) | `createRequest()` + `directBody()` + le déclencheur `@claude` du workflow du kit |
@@ -307,9 +308,17 @@ Trois fichiers, aucune dépendance JS, aucun build.
 
 ## 13. Feuille de route
 
-Les prochaines améliorations sont dans le [BACKLOG](../BACKLOG.md) : cache hors-ligne (service
-worker), icône PNG iOS, journal de run en direct, secret automatique au bootstrap, compteur de
-quota API, notifications ntfy cliquables.
+Le gros du confort est déjà livré (service worker + cache hors-ligne, icônes PWA PNG maskable,
+journal de run en direct, secret Claude au bootstrap, quota API, notifications ntfy/natives,
+lanceur de session cloud). Ce qui reste, dans le [BACKLOG](../BACKLOG.md) :
+
+- **Registre rafraîchissable depuis l'interface** — un bouton « Rafraîchir le registre » + un
+  déclenchement automatique en fin de « Nouveau projet » (via un workflow `fleet-refresh.yml` côté
+  claude-ops), pour qu'un projet créé apparaisse dans l'atelier sans passer par un terminal.
+- **Tous les fils de dialogue dans la vue projet** — afficher un bloc par issue `claude` ouverte
+  (aujourd'hui `buildModel` n'en garde qu'un), pour pouvoir répondre à chacune.
+- **Mobile : « À traiter » visible partout** — un badge sur l'onglet Atelier + l'heure du dernier
+  relevé lisible depuis Codex/Chroniques.
 
 Convention du repo : 1 item = 1 session = 1 PR ; vérifier avec `node scripts/verify.mjs` avant
 de conclure ; commits en français, branche + PR (jamais de push direct sur `main`).

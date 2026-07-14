@@ -15,7 +15,7 @@
 - [x] Secrets automatiques au bootstrap « Nouveau projet » — geste sans terminal : badge de présence du secret par projet + bouton « Poser / mettre à jour » (copie le nom, ouvre la page du secret) ; à la création d'un projet, l'onglet du secret s'ouvre automatiquement. Chiffrement libsodium volontairement écarté (règle zéro-dépendance) — lot 4.
 - [x] Compteur de quota API GitHub — requêtes restantes lues sur les en-têtes `x-ratelimit-*`, affichées dans la topbar et les paramètres, alerte toast sous 500 — lot 4.
 - [x] Notifications ntfy cliquables vers la vue projet — push sur nouveaux événements actionnables (question de Claude, PR prête), le lien `?repo=<id>` ouvre FleetView sur le bon repo ; sujet ntfy en localStorage, jamais commité — lot 4.
-- [ ] Passage du repo en public — historique vérifié (aucun secret), URL Pages documentée dans le README ([PR #6](https://github.com/Thibaud888/fleetview/pull/6)) ; reste le geste manuel : Settings → Change visibility → Make public.
+- [x] Passage du repo en public — fait : repo public + site en ligne sur [thibaud888.github.io/fleetview](https://thibaud888.github.io/fleetview/) (historique vérifié, aucun secret) ([PR #6](https://github.com/Thibaud888/fleetview/pull/6)).
 - [x] Workflow Pages en pause tant que le repo est privé (garde `if` dans le stub, réactivation automatique au passage en public) — [PR #5](https://github.com/Thibaud888/fleetview/pull/5).
 - [x] Bouton micro 🎙️ pour dicter les idées (Web Speech API) — [PR #10](https://github.com/Thibaud888/fleetview/pull/10).
 - [x] Micro dans le champ titre du cadrage — bouton 🎙️ sur `#f-title`, même moteur générique `[data-mic]` que le détail, sans régression sur le micro du champ détail (issue #21, miroir de claude-ops#12).
