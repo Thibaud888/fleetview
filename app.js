@@ -110,8 +110,13 @@ async function gh(path, opts={}){
     body: opts.body?JSON.stringify(opts.body):undefined,
   });
   captureRate(res);
-  if(res.status===401||res.status===403){
-    const e=new Error("auth"); e.status=res.status; e.detail=await res.text().catch(()=> ""); throw e;
+  if(res.status===401||res.status===403||res.status===429){
+    const detail=await res.text().catch(()=> "");
+    const e=new Error("auth"); e.status=res.status; e.detail=detail;
+    // Un 403/429 de rate limit n'est PAS un problème de token : ne pas renvoyer
+    // l'utilisateur à l'écran de config pour ça.
+    if(res.status!==401 && (res.headers.get("x-ratelimit-remaining")==="0" || /rate limit/i.test(detail))) e.rateLimit=true;
+    throw e;
   }
   if(!res.ok){
     const e=new Error(`GitHub ${res.status} sur ${path}`); e.status=res.status; e.detail=await res.text().catch(()=> ""); throw e;
@@ -119,6 +124,23 @@ async function gh(path, opts={}){
   return res.status===204?null:res.json();
 }
 const enc = encodeURIComponent;
+
+// Message d'erreur GitHub extrait du corps de réponse (JSON {"message": …}), s'il existe.
+function ghMsg(e){ try{ return JSON.parse(e.detail).message||""; }catch(_){ return ""; } }
+// Traduit une erreur API en message actionnable (toasts et bandeaux) — fini les « Échec : auth ».
+function errMsg(e, ctx){
+  if(!e) return "erreur inconnue";
+  const m=ghMsg(e);
+  if(e.rateLimit) return "quota API GitHub épuisé — réessaie "+(rateInfo.reset?timeUntil(rateInfo.reset):"dans quelques minutes");
+  if(e.status===401) return "token invalide ou expiré — recolle-le (⚙ → Changer le token)";
+  if(e.status===403) return "refusé par GitHub — permission manquante sur le token ?"+(m?` (${m})`:"");
+  if(e.status===404) return "introuvable côté GitHub — supprimé ou déplacé entre-temps ?";
+  if(e.status===405) return ctx==="merge" ? "PR non mergeable — draft, conflit ou checks requis"+(m?` (${m})`:"")
+                                          : "action refusée par GitHub"+(m?` : ${m}`:"");
+  if(e.status===409) return "conflit de version — quelque chose a changé entre-temps, réessaie";
+  if(e.status===422) return "refusé par GitHub — donnée invalide ou nom déjà pris"+(m?` (${m})`:"");
+  return (e.message||"erreur inconnue")+(m?` — ${m}`:"");
+}
 
 // Quota API : lit les en-têtes x-ratelimit-* de chaque réponse, alerte sous 500.
 // Ne retenir que la ressource "core" (5000 req/h) : /search/* a son propre compteur
@@ -657,7 +679,18 @@ function renderDetail(){
   const r=ui.openRepo&&model.repos.find(x=>x.id===ui.openRepo);
   $("#view-fleet").hidden=!!r;
   $("#view-detail").hidden=!r;
-  if(!r){ stopJournal(); document.body.classList.remove("thread-full-open"); $("#view-detail").innerHTML=""; return; }
+  if(!r){ stopJournal(); document.body.classList.remove("thread-full-open"); $("#view-detail").innerHTML=""; renderDetail._repo=null; return; }
+  // Brouillons en cours (réponse à Claude, demande de changements) : le relevé auto
+  // re-render toute la vue — on capture avant, on restaure après si c'est le même repo,
+  // sinon ce qu'on tape serait effacé toutes les 2 minutes.
+  const draft = renderDetail._repo===r.id ? {
+    thread: ($("#thread-reply")||{}).value||"",
+    pr: ($("#pr-reply-text")||{}).value||"",
+    prOpen: !!($("#pr-reply") && !$("#pr-reply").hidden),
+    prCadre: $("#pr-reply-cadrage") ? $("#pr-reply-cadrage").checked : null,
+    focusId: document.activeElement ? document.activeElement.id : "",
+  } : null;
+  renderDetail._repo=r.id;
   const st=STATES[r.state];
   const lifeLabel={actif:"actif",veille:"en veille",archive:"archivé"}[r.life];
   const relatedIdeas=model.ideas.filter(i=>i.repo===r.id);
@@ -774,6 +807,18 @@ function renderDetail(){
         <a class="ghlink" href="${esc(r.url)}" target="_blank" rel="noopener">au besoin : GitHub ↗</a>
       </div>
     </div>`;
+
+  // Restauration des brouillons capturés ci-dessus (même repo re-rendu).
+  if(draft){
+    const tr=$("#thread-reply"); if(tr && draft.thread) tr.value=draft.thread;
+    const pt=$("#pr-reply-text"); if(pt && draft.pr) pt.value=draft.pr;
+    if(draft.prOpen && $("#pr-reply")) $("#pr-reply").hidden=false;
+    if(draft.prCadre!==null && $("#pr-reply-cadrage")) $("#pr-reply-cadrage").checked=draft.prCadre;
+    if(draft.focusId==="thread-reply"||draft.focusId==="pr-reply-text"){
+      const el=document.getElementById(draft.focusId);
+      if(el){ el.focus(); const L=el.value.length; try{ el.setSelectionRange(L,L); }catch(_){} }
+    }
+  }
 
   // Dialogue en plein écran : on fige le défilement de la page derrière.
   document.body.classList.toggle("thread-full-open", !!(ui.threadBig && th));
@@ -1120,12 +1165,17 @@ async function refresh(showErrors=true){
   ui.loading=true; renderSyncNote();
   try{
     await loadAll();
-    banner(null);
+    // En démo, le bandeau d'avertissement reste affiché (il était effacé sitôt posé).
+    if(demo) banner("Mode démo : données factices, aucune action réelle. Recharge la page pour relier ton token.","info");
+    else banner(null);
     renderAll();
     applyPendingOpen(); // deep-link ntfy éventuel
     runPush();          // notifie les nouveaux événements actionnables
   }catch(e){
-    if(e.status===401||e.status===403){
+    if(e.rateLimit){
+      // Quota épuisé : on garde l'affichage courant, pas d'écran de config.
+      banner("Quota API GitHub épuisé — l'affichage reste sur le dernier relevé, nouvel essai au prochain cycle"+(rateInfo.reset?" (réinit. "+timeUntil(rateInfo.reset)+")":"")+".", "info");
+    } else if(e.status===401||e.status===403){
       banner("Token refusé par GitHub ("+e.status+"). Vérifie ses permissions ou recolle-le.", "");
       showConfig(true);
     } else if(!e.status){
@@ -1134,7 +1184,7 @@ async function refresh(showErrors=true){
         banner("Hors ligne — aucun relevé en cache pour l'instant. Reconnecte-toi.", "info");
       }
     } else if(showErrors){
-      banner("Relevé impossible : "+e.message+" — nouvel essai au prochain cycle.");
+      banner("Relevé impossible : "+errMsg(e)+" — nouvel essai au prochain cycle.");
     }
   }finally{
     ui.loading=false; renderSyncNote();
@@ -1218,7 +1268,7 @@ document.addEventListener("click",async(e)=>{
     }
     if(b.dataset.cloudRepo!==undefined){ launchCloud({repo:b.dataset.cloudRepo}); return; }
     if(b.dataset.unarchive!==undefined){
-      try{ await setLifecycle(b.dataset.unarchive,"actif"); await refresh(); }catch(err){ toast("Échec : "+err.message); }
+      try{ await setLifecycle(b.dataset.unarchive,"actif"); await refresh(); }catch(err){ toast("Échec : "+errMsg(err)); }
       return;
     }
     if(b.dataset.act!==undefined){
@@ -1239,9 +1289,11 @@ document.addEventListener("click",async(e)=>{
           case "pr-comment": $("#pr-reply").hidden=false; $("#pr-reply-text").focus(); break;
           case "pr-comment-send": if(r){ const v=$("#pr-reply-text").value.trim(); if(!v)break;
             const cadre=$("#pr-reply-cadrage")&&$("#pr-reply-cadrage").checked;
-            b.disabled=true; await sendComment(r.id,n,cadre?changesCadrage(v):v); await refresh(); } break;
+            b.disabled=true; await sendComment(r.id,n,cadre?changesCadrage(v):v);
+            $("#pr-reply-text").value=""; $("#pr-reply").hidden=true; await refresh(); } break;
           case "thread-send": if(r){ const v=$("#thread-reply").value.trim(); if(!v)break;
-            b.disabled=true; await sendComment(r.id,n,v); await refresh(); } break;
+            b.disabled=true; await sendComment(r.id,n,v);
+            $("#thread-reply").value=""; await refresh(); } break;
           case "thread-big": ui.threadBig=!ui.threadBig; renderDetail();
             if(ui.threadBig){ const ms=document.querySelectorAll("#thread-box .msg"); if(ms.length) ms[ms.length-1].scrollIntoView({block:"end"}); } break;
           case "thread-top": { const m=document.querySelector("#thread-box .msg"); if(m) m.scrollIntoView({behavior:"smooth",block:"nearest"}); } break;
@@ -1255,7 +1307,7 @@ document.addEventListener("click",async(e)=>{
           case "secret-set": openSecretPage(n||(r&&r.id)); break;
           case "demo": toast("Mode démo — relie ton token pour agir en vrai."); break;
         }
-      }catch(err){ toast("Échec : "+err.message, 6000); b.disabled=false; }
+      }catch(err){ toast("Échec : "+errMsg(err, b.dataset.act==="merge"?"merge":""), 6000); b.disabled=false; }
       return;
     }
   }
@@ -1263,21 +1315,28 @@ document.addEventListener("click",async(e)=>{
   if(card&&!b) openDetail(card.dataset.card);
 });
 
+// La modale ne se ferme qu'en cas de SUCCÈS : avant, method="dialog" la fermait dès le
+// submit et un échec API (422, réseau…) emportait tout ce qui avait été saisi.
 $("#form-new").addEventListener("submit",async(e)=>{
+  e.preventDefault();
   const title=$("#f-title").value.trim();
-  if(!title){ e.preventDefault(); $("#f-title").focus(); return; }
+  if(!title){ $("#f-title").focus(); return; }
   const repo=$("#f-repo").value;
   const desc=$("#f-desc").value.trim();
   const mode=document.querySelector('input[name="f-when"]:checked').value;
   const modelChoice=document.querySelector('input[name="f-model"]:checked').value;
   const prio=document.querySelector('input[name="f-prio"]:checked').value;
   const cat=$("#f-cat").value;
-  const ctx=ideaLaunchCtx; ideaLaunchCtx=null;
+  const btn=$("#f-submit");
+  btn.disabled=true; btn.textContent="Envoi…";
   try{
     const is=await createRequest({repo,title,desc,mode,modelChoice,prio,cat});
+    const ctx=ideaLaunchCtx; ideaLaunchCtx=null;
     if(ctx&&is&&mode!=="box") await closeIdea(ctx.num,is.html_url);
+    modal.close();
     await refresh(false);
-  }catch(err){ toast("Échec : "+err.message, 6000); }
+  }catch(err){ toast("Échec : "+errMsg(err), 6000); }
+  finally{ btn.disabled=false; syncWhen(); }
 });
 document.querySelectorAll('input[name="f-when"]').forEach(x=>x.addEventListener("change",syncWhen));
 $("#btn-new").addEventListener("click",()=>openModal());
@@ -1288,12 +1347,16 @@ $("#btn-newproject").addEventListener("click",()=>modalProjet.showModal());
 $("#link-newproject").addEventListener("click",(e)=>{e.preventDefault();modal.close();modalProjet.showModal();});
 $("#modal-projet-close").addEventListener("click",()=>modalProjet.close());
 $("#form-projet").addEventListener("submit",async(e)=>{
+  e.preventDefault(); // même principe : fermeture au succès seulement
   const name=$("#p-name").value.trim();
-  if(!name){ e.preventDefault(); return; }
+  if(!name) return;
   const type=$("#p-type").value;
   const priv=document.querySelector('input[name="p-vis"]:checked').value==="private";
-  try{ await newProject(name,type,priv); await refresh(false); }
-  catch(err){ toast("Échec : "+err.message, 7000); }
+  const btn=document.querySelector('#form-projet button[type="submit"]');
+  btn.disabled=true; const old=btn.textContent; btn.textContent="⚒ Création…";
+  try{ await newProject(name,type,priv); modalProjet.close(); await refresh(false); }
+  catch(err){ toast("Échec : "+errMsg(err), 7000); }
+  finally{ btn.disabled=false; btn.textContent=old; }
 });
 
 $("#btn-refresh").addEventListener("click",()=>refresh());
@@ -1317,7 +1380,7 @@ $("#ideas").addEventListener("click",async(e)=>{
       if(!confirm("Retirer cette idée du codex ?")) return;
       t.disabled=true; await removeIdea(Number(d.ideaDel)); await refresh(false);
     }
-  }catch(err){ t.disabled=false; toast("Échec : "+err.message, 6000); }
+  }catch(err){ t.disabled=false; toast("Échec : "+errMsg(err), 6000); }
 });
 $("#ideas").addEventListener("change",(e)=>{
   if(e.target.id==="ideas-repo-filter"){ ideaUI.repoFilter=e.target.value; renderIdeas(); }
