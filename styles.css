@@ -406,6 +406,16 @@ body.thread-full-open{overflow:hidden}
 .reply-opt{display:flex; gap:7px; align-items:flex-start; margin-top:7px; font-size:12.5px; color:var(--ink-soft); cursor:pointer}
 .reply-opt input{margin-top:2px; accent-color:var(--accent)}
 
+/* ============ TÂCHES DE LA FLOTTE ============ */
+#zone-taches{margin-top:20px}
+.task{display:flex; align-items:flex-start; gap:10px; padding:10px 16px; border-bottom:1px solid var(--line)}
+.task:last-child{border-bottom:none}
+.task-body{flex:1; min-width:0; font-family:var(--font-sans); font-size:13.5px; line-height:1.45}
+.task-desc{display:block; color:var(--mut); font-size:12px; line-height:1.4; margin-top:2px}
+.task-busy{font-size:10px; letter-spacing:.02em; text-transform:none; color:var(--info)}
+.idea-launch:disabled{opacity:.4; cursor:default}
+.idea-launch:disabled:hover{background:transparent; border-color:var(--line-strong)}
+
 /* ============ CHRONIQUES ============ */
 .feed{list-style:none; margin:0; padding:6px 0}
 .feed li{display:flex; gap:11px; padding:8px 16px; font-family:var(--font-sans); font-size:13px; line-height:1.45}
@@ -470,6 +480,10 @@ dialog::backdrop{background:color-mix(in srgb, var(--ink) 45%, transparent); bac
   .bb-btn[aria-pressed="true"]{color:var(--accent)}
   .bb-btn .n{font-size:10px; font-weight:400}
   body[data-tab="flotte"] #panel-idees, body[data-tab="flotte"] #panel-activite{display:none}
+  body[data-tab="flotte"] #zone-taches{display:none} /* sur mobile, les tâches ont leur onglet */
+  body[data-tab="taches"] #view-fleet, body[data-tab="taches"] #view-detail,
+  body[data-tab="taches"] #panel-idees, body[data-tab="taches"] #panel-activite{display:none}
+  body[data-tab="taches"] #zone-taches{margin-top:0}
   body[data-tab="idees"] #zone-flotte, body[data-tab="idees"] #panel-activite{display:none}
   body[data-tab="idees"] .col-side{margin-top:0}
   body[data-tab="activite"] #zone-flotte, body[data-tab="activite"] #panel-idees{display:none}
