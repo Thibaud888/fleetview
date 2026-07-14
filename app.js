@@ -265,7 +265,7 @@ async function loadAll(){
     }catch(e){}
   }));
 
-  // 5. Commentaires des issues claude ouvertes (dialogue de cadrage) — repos suivis seulement
+  // 5. Commentaires des issues claude ouvertes (fil de dialogue de la session) — repos suivis seulement
   const commentsByIssue = {};
   await Promise.all(claudeIssues.filter(i=>i.comments>0 && activeIds.has(i.repo)).map(async i=>{
     try{ commentsByIssue[i.repo+"#"+i.number] = await gh(`/repos/${OWNER}/${i.repo}/issues/${i.number}/comments?per_page=100`); }
@@ -291,19 +291,18 @@ function buildModel(fleet, D){
     const seen=(iso)=>{ if(iso && (!lastTs||iso>lastTs)) lastTs=iso; };
     const runs = D.runsByRepo[id]||[];
 
-    // Issues claude ouvertes (sessions / cadrage).
+    // Issues claude ouvertes (sessions fire-and-forget lancées via issue + Actions).
     // Seuls les runs du workflow de dispatch (claude.yml) comptent comme « session » :
     // un cron ou un map.yml qui tourne ne doit pas faire croire qu'une session est en cours.
     const claudeRunning = runs.some(r=>["in_progress","queued"].includes(r.status) && (r.path||"").endsWith("/claude.yml"));
     for(const is of D.claudeIssues.filter(i=>i.repo===id)){
       seen(is.updated_at);
-      const isCadrage = (is.labels||[]).some(l=>l.name==="cadrage");
       const comments = D.commentsByIssue[id+"#"+is.number]||[];
       const lastC = comments[comments.length-1];
       // Liaison PR ↔ issue : frontière de mot obligatoire (« #1 » ne doit pas matcher « #12 »).
       const linkedPR = D.openPRs.find(p=>p.repo===id && new RegExp(`#${is.number}\\b`).test(p.body||""));
       // L'âge se mesure depuis la DERNIÈRE activité du fil, pas depuis la création :
-      // un dialogue de cadrage vit naturellement plus de 2 h sans être en échec.
+      // un fil qui échange des questions vit naturellement plus de 2 h sans être en échec.
       const lastActivity = lastC ? lastC.created_at : is.created_at;
       const idleH = (Date.now()-new Date(lastActivity))/3.6e6;
 
@@ -312,27 +311,27 @@ function buildModel(fleet, D){
       } else if(claudeRunning){
         bump("info");
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session Actions en cours`, small:timeAgo(is.updated_at), act:{id:"gh-issue", n:is.number, label:"Suivre"}});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage, body:is.body};
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, body:is.body};
       } else if(lastC && lastC.user.login!==OWNER){
         bump("warn");
-        lines.push({c:"warn", t:`${isCadrage?"Cadrage":"Issue"} #${is.number} « ${is.title} » — réponse de Claude à lire`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
+        lines.push({c:"warn", t:`Issue #${is.number} « ${is.title} » — réponse de Claude à lire`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
         attention.push({c:"warn", repo:id, t:`Claude attend ta réponse sur « ${is.title} »`, small:timeAgo(lastC.created_at)});
         notify.push({key:`q:${id}#${is.number}:${lastC.id||lastC.created_at}`, kind:"q",
           title:`${id} — Claude attend ta réponse`, msg:is.title, repo:id, tag:"speech_balloon", prio:4});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage, body:is.body};
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, body:is.body};
       } else if(idleH>2){
         bump("crit");
         lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — sans nouvelles depuis ${Math.round(idleH)} h (session en échec ?)`, act:{id:"relabel", n:is.number, label:"Relancer"}});
         attention.push({c:"crit", repo:id, t:`« ${is.title} » : sans nouvelles depuis ${Math.round(idleH)} h`});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage, body:is.body};
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, body:is.body};
       } else if(lastC){
         bump("info");
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — réponse envoyée, la session reprend`, small:timeAgo(lastC.created_at)});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage, body:is.body};
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, body:is.body};
       } else {
         bump("info");
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session en attente de démarrage`, small:timeAgo(is.created_at)});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage, body:is.body};
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, body:is.body};
       }
       feed.push({ts:is.created_at, c:"info", repo:id, txt:`Issue #${is.number} « ${is.title} » ouverte.`});
     }
@@ -449,7 +448,7 @@ function demoModel(){
           {number:4,name:"Session Claude Code (implémentation)",status:"in_progress",conclusion:null},
           {number:5,name:"Vérification (verify.mjs)",status:"queued",conclusion:null},
           {number:6,name:"Ouverture de la PR",status:"queued",conclusion:null}]}],
-        threadIssue:{num:18, title:"Export PDF", cadrage:false, comments:[
+        threadIssue:{num:18, title:"Export PDF", body:"Ajouter un bouton pour exporter le bulletin courant en PDF.\n\n_Créée depuis FleetView._", comments:[
           {user:{login:OWNER}, body:"Ajouter un bouton pour exporter le bulletin courant en PDF."},
           {user:{login:"claude-bot"}, body:"## Spécification\n\n**Objectif** : bouton « Exporter en PDF » dans la barre du bulletin.\n\n- Rendu client via `window.print` + feuille `@media print` dédiée — aucune dépendance\n- Critères de done :\n- [x] le PDF reprend le graphe et le tableau\n- [ ] sans la navigation\n\nJ'enchaîne l'implémentation."},
           {user:{login:"claude-bot"}, body:"Fait : bouton ajouté, styles d'impression en place, **PR #19 ouverte** (Closes #18).\n\n```bash\nnode scripts/verify.mjs   # VERIFY OK\n```\nVérifié : l'aperçu d'impression montre le bulletin seul."},
@@ -610,7 +609,7 @@ function renderIdeas(){
       <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
       <span class="idea-body" data-idea-toggle="${i.num}" role="button" tabindex="0">${esc(i.t)}<span class="idea-repo">${esc(i.repo)}${i.desc?" · …":""}</span></span>
       <button class="idea-launch" data-cloud="${i.num}" title="Session cloud interactive (claude.ai/code)">🌩</button>
-      <button class="idea-launch" data-launch="${i.num}" title="Cadrer puis lancer en issue">🚀</button>
+      <button class="idea-launch" data-launch="${i.num}" title="Lancer en issue directe (Actions, fire-and-forget)">🚀</button>
     </div>
     ${open?`<div class="idea-more">${edit?ideaEditHtml(i):`
       ${i.desc?`<p class="idea-desc">${esc(i.desc)}</p>`:""}
@@ -747,7 +746,6 @@ function renderDetail(){
     thread: ($("#thread-reply")||{}).value||"",
     pr: ($("#pr-reply-text")||{}).value||"",
     prOpen: !!($("#pr-reply") && !$("#pr-reply").hidden),
-    prCadre: $("#pr-reply-cadrage") ? $("#pr-reply-cadrage").checked : null,
     focusId: document.activeElement ? document.activeElement.id : "",
   } : null;
   renderDetail._repo=r.id;
@@ -773,8 +771,6 @@ function renderDetail(){
           <button type="button" class="btn btn-mic" data-mic="#pr-reply-text" title="Dicter">🎙️</button>
           <button class="btn" data-act="pr-comment-send" data-n="${r.pr.num}">Envoyer</button>
         </div>
-        <label class="reply-opt"><input type="checkbox" id="pr-reply-cadrage" checked>
-          🪶 cadrer d'abord — Claude poste un court plan en commentaire puis l'applique dans la foulée</label>
       </div>
     </div>`:"";
 
@@ -852,7 +848,7 @@ function renderDetail(){
             <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
             <span style="flex:1">${esc(i.t)}</span>
             <button class="idea-launch" data-cloud="${i.num}" title="Session cloud interactive">🌩</button>
-            <button class="idea-launch" data-launch="${i.num}" title="Cadrer puis lancer en issue">🚀</button>
+            <button class="idea-launch" data-launch="${i.num}" title="Lancer en issue directe (Actions, fire-and-forget)">🚀</button>
           </div>`).join("")}
       </div>`:""}
       ${relatedFeed.length?`
@@ -876,7 +872,6 @@ function renderDetail(){
     const tr=$("#thread-reply"); if(tr && draft.thread) tr.value=draft.thread;
     const pt=$("#pr-reply-text"); if(pt && draft.pr) pt.value=draft.pr;
     if(draft.prOpen && $("#pr-reply")) $("#pr-reply").hidden=false;
-    if(draft.prCadre!==null && $("#pr-reply-cadrage")) $("#pr-reply-cadrage").checked=draft.prCadre;
     if(draft.focusId==="thread-reply"||draft.focusId==="pr-reply-text"){
       const el=document.getElementById(draft.focusId);
       if(el){ el.focus(); const L=el.value.length; try{ el.setSelectionRange(L,L); }catch(_){} }
@@ -935,22 +930,6 @@ Règles de la flotte :
 
 _Créée depuis FleetView._`;
 }
-function cadrageBody(title,desc){
-  return `Reformule d'abord la demande ci-dessous en une courte spécification (contexte, objectif,
-critères de done vérifiables, étapes) et poste-la en COMMENTAIRE de cette issue.
-
-Puis **enchaîne directement l'implémentation** sans attendre de validation : branche
-\`claude/issue-<n>\`, vérification (script verify du repo, sinon build + tests), PR en français
-avec \`Closes #<n>\`, BACKLOG.md mis à jour.
-
-N'attends une réponse de ${OWNER} QUE si un point réellement bloquant t'empêche d'avancer :
-dans ce cas, pose tes questions numérotées en commentaire et attends. Sinon, va au bout.
-
-**Demande brute :**
-${desc||title}
-
-_Créée depuis FleetView (parcours cadrage)._`;
-}
 async function createRequest({repo,title,desc,mode,modelChoice,prio,cat}){
   if(demo){ toast("Mode démo — rien n'est envoyé. Relie ton token pour agir en vrai."); return; }
   if(mode==="box"){
@@ -968,12 +947,9 @@ async function createRequest({repo,title,desc,mode,modelChoice,prio,cat}){
   if(MODEL_LABEL[modelChoice]) labels.push(MODEL_LABEL[modelChoice]);
   await ensureLabel(target,"claude","5319E7","Déclenche une session Claude (kit de flotte)");
   if(MODEL_LABEL[modelChoice]) await ensureLabel(target,MODEL_LABEL[modelChoice],"7B61C4","Choix de modèle");
-  if(mode==="cadrage"){ labels.push("cadrage"); await ensureLabel(target,"cadrage","2E86AB","Phase de spécification avant implémentation"); }
-  const body = mode==="cadrage"?cadrageBody(title,desc):directBody(title,desc);
+  const body = directBody(title,desc);
   const is=await gh(`/repos/${OWNER}/${target}/issues`,{method:"POST",body:{title,body,labels}});
-  toast(mode==="cadrage"
-    ?`🪶 Cadrage lancé : issue #${is.number} sur ${target}. Claude poste sa spécification et ses questions ici.`
-    :`⚡ Issue #${is.number} lancée sur ${target} — session Actions en route, la PR apparaîtra ici.`, 5600);
+  toast(`⚡ Issue #${is.number} lancée sur ${target} — session Actions en route, la PR apparaîtra ici.`, 5600);
   return is;
 }
 async function saveIdea(num){
@@ -1002,15 +978,6 @@ async function closeIdea(num, launchedUrl){
     await gh(`/repos/${OWNER}/${META}/issues/${num}/comments`,{method:"POST",body:{body:`→ lancée : ${launchedUrl}`}});
     await gh(`/repos/${OWNER}/${META}/issues/${num}`,{method:"PATCH",body:{state:"closed"}});
   }catch(e){}
-}
-// Habille une demande de changements : plan posté en commentaire puis appliqué dans la foulée.
-function changesCadrage(text){
-  return `Reformule cette demande de changements en un court plan d'action (fichiers touchés, étapes, critères vérifiables) et poste-le en COMMENTAIRE de cette PR, puis **applique-le directement** sur cette branche — sans attendre de validation.
-
-N'attends une réponse de ${OWNER} QUE si un point réellement bloquant t'en empêche : dans ce cas, pose tes questions numérotées en commentaire et attends. Sinon, va au bout.
-
-**Demande brute :**
-${text}`;
 }
 async function sendComment(repo,num,text){
   if(demo){ toast("Mode démo — rien n'est envoyé."); return; }
@@ -1276,8 +1243,9 @@ function openModal(opts){
   if(opts.repo) sel.value=opts.repo;
   $("#f-title").value=opts.title||"";
   $("#f-desc").value=opts.desc||"";
-  // Parcours de départ : "box" pour une idée, sinon cadrage (défaut du formulaire).
-  const parcours=opts.parcours||"cadrage";
+  // Parcours de départ : "box" pour ranger au codex, "direct" pour une issue fire-and-forget,
+  // sinon "cloud" (session interactive claude.ai/code) — le défaut recommandé pour cadrer.
+  const parcours=opts.parcours||"cloud";
   const rp=document.querySelector(`input[name="f-when"][value="${parcours}"]`); if(rp) rp.checked=true;
   $("#modal-title").textContent=opts.title?"Lancer cette idée":(parcours==="box"?"Nouvelle idée":"Nouvelle demande");
   $("#opt-box").style.display=opts.hideBox?"none":"";
@@ -1291,8 +1259,9 @@ function syncWhen(){
   const v=document.querySelector('input[name="f-when"]:checked').value;
   $("#f-prio-row").classList.toggle("on",v==="box");
   $("#f-cat-row").classList.toggle("on",v==="box");
-  $("#f-model-row").style.display=v==="box"?"none":"";
-  $("#f-submit").textContent={cadrage:"🪶 Cadrer avec Claude",direct:"⚡ Créer l'issue",box:"💡 Ranger au codex"}[v];
+  // Le choix de modèle ne concerne que l'issue directe (Actions) ; la session cloud choisit le sien.
+  $("#f-model-row").style.display=v==="direct"?"":"none";
+  $("#f-submit").textContent={cloud:"🌩 Ouvrir la session cloud",direct:"⚡ Créer l'issue",box:"💡 Ranger au codex"}[v];
 }
 
 /* ================= Événements ================= */
@@ -1323,7 +1292,7 @@ document.addEventListener("click",async(e)=>{
     if(b.dataset.newfor!==undefined){ openModal({repo:b.dataset.newfor}); return; }
     if(b.dataset.launch!==undefined){
       const idea=model.ideas.find(i=>i.num===Number(b.dataset.launch));
-      if(idea){ ideaLaunchCtx=idea; openModal({repo:idea.repo==="flotte"?"flotte":idea.repo,title:idea.t,desc:idea.desc,hideBox:true}); }
+      if(idea){ ideaLaunchCtx=idea; openModal({repo:idea.repo==="flotte"?"flotte":idea.repo,title:idea.t,desc:idea.desc,hideBox:true,parcours:"direct"}); }
       return;
     }
     // Session cloud interactive : depuis un item du codex (contexte = idée) ou une carte/vue projet.
@@ -1355,8 +1324,7 @@ document.addEventListener("click",async(e)=>{
           case "merge": if(r){ b.disabled=true; await mergePr(r.id,n); await refresh(); } break;
           case "pr-comment": $("#pr-reply").hidden=false; $("#pr-reply-text").focus(); break;
           case "pr-comment-send": if(r){ const v=$("#pr-reply-text").value.trim(); if(!v)break;
-            const cadre=$("#pr-reply-cadrage")&&$("#pr-reply-cadrage").checked;
-            b.disabled=true; await sendComment(r.id,n,cadre?changesCadrage(v):v);
+            b.disabled=true; await sendComment(r.id,n,v);
             $("#pr-reply-text").value=""; $("#pr-reply").hidden=true; await refresh(); } break;
           case "thread-send": if(r){ const v=$("#thread-reply").value.trim(); if(!v)break;
             b.disabled=true; await sendComment(r.id,n,v);
@@ -1391,6 +1359,9 @@ $("#form-new").addEventListener("submit",async(e)=>{
   const repo=$("#f-repo").value;
   const desc=$("#f-desc").value.trim();
   const mode=document.querySelector('input[name="f-when"]:checked').value;
+  // Parcours cloud : on ne crée pas d'issue — on compose le prompt, on copie, on ouvre claude.ai/code.
+  // (Doit rester dans le geste de submit pour l'écriture presse-papier et l'ouverture d'onglet.)
+  if(mode==="cloud"){ launchCloud({repo,title,desc}); ideaLaunchCtx=null; modal.close(); return; }
   const modelChoice=document.querySelector('input[name="f-model"]:checked').value;
   const prio=document.querySelector('input[name="f-prio"]:checked').value;
   const cat=$("#f-cat").value;
