@@ -27,7 +27,7 @@ sur téléphone, « Ajouter à l'écran d'accueil » pour l'installer en PWA.
 En local :
 
 ```bash
-npx serve -l 4010 .        # puis http://localhost:4010
+npx serve -l 4000 .        # puis http://localhost:4000
 ```
 
 Au premier lancement : colle un **token GitHub fine-grained** (il reste dans ton navigateur),
@@ -40,7 +40,7 @@ Les permissions exactes du token, tous les concepts et l'architecture sont dans 
 
 | | |
 |---|---|
-| **Lancer** | `npx serve -l 4010 .` |
+| **Lancer** | `npx serve -l 4000 .` |
 | **Vérifier** | `node scripts/verify.mjs` |
 | **Déployer** | GitHub Pages : [thibaud888.github.io/fleetview](https://thibaud888.github.io/fleetview/) (`pages.yml`, sur `main`) |
 | **Coût** | 0 € (Pages + API GitHub, ~25 requêtes/relevé sur 5 000/h) |
