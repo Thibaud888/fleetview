@@ -100,7 +100,7 @@ Chaque projet a un **état** calculé à chaque relevé, dans cet ordre de prior
 
 | État | Couleur | Signifie |
 |---|---|---|
-| **À débloquer** | rouge | Cron en échec, checks de PR au rouge, ou session sans PR après > 2 h |
+| **À débloquer** | rouge | Cron en échec, checks de PR au rouge, ou issue sans nouvelles (ni PR, ni commentaire, ni session) depuis > 2 h |
 | **En session** | bleu | Une session Claude tourne (ou une PR est en cours de vérification) |
 | **En attente** | orange | Une PR attend ta décision, ou Claude attend ta réponse de cadrage |
 | **Calme** | vert | Rien en cours |
