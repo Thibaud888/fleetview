@@ -61,6 +61,46 @@ const $ = (s)=>document.querySelector(s);
 function esc(s){ return String(s??"").replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 function b64d(s){ const bin=atob(String(s).replace(/\n/g,"")); const a=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i); return new TextDecoder().decode(a); }
 function b64e(s){ const a=new TextEncoder().encode(s); let bin=""; for(const b of a) bin+=String.fromCharCode(b); return btoa(bin); }
+
+// Mini-renderer markdown (zéro dépendance) pour le dialogue et les corps de PR :
+// Claude écrit en markdown, l'afficher brut rendait le flux central illisible.
+// Couvre : titres #–####, listes (-, *, 1.), cases à cocher, blocs et `code`,
+// **gras**, [liens](https://…), citations >, filets ---. Tout passe par esc()
+// AVANT transformation : aucune injection possible.
+function mdInline(s){
+  return s
+    .replace(/`([^`]+)`/g,"<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+function md(src){
+  const out=[]; let list=null;
+  const closeList=()=>{ if(list){ out.push(`</${list}>`); list=null; } };
+  const lines=String(src||"").split(/\r?\n/);
+  let i=0;
+  while(i<lines.length){
+    const t=lines[i].trim();
+    if(/^```/.test(t)){
+      closeList();
+      const buf=[]; i++;
+      while(i<lines.length && !/^```/.test(lines[i].trim())){ buf.push(lines[i]); i++; }
+      i++; out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`);
+      continue;
+    }
+    let m;
+    if(!t){ closeList(); }
+    else if((m=t.match(/^(#{1,4})\s+(.*)$/))){ closeList(); out.push(`<div class="md-h md-h${m[1].length}">${mdInline(esc(m[2]))}</div>`); }
+    else if(/^(-{3,}|\*{3,})$/.test(t)){ closeList(); out.push('<hr class="md-hr">'); }
+    else if((m=t.match(/^[-*]\s+\[([ xX])\]\s+(.*)$/))){ if(list!=="ul"){closeList(); out.push("<ul>"); list="ul";} out.push(`<li>${m[1]===" "?"☐":"☑"} ${mdInline(esc(m[2]))}</li>`); }
+    else if((m=t.match(/^[-*•]\s+(.*)$/))){ if(list!=="ul"){closeList(); out.push("<ul>"); list="ul";} out.push(`<li>${mdInline(esc(m[1]))}</li>`); }
+    else if((m=t.match(/^\d+[.)]\s+(.*)$/))){ if(list!=="ol"){closeList(); out.push("<ol>"); list="ol";} out.push(`<li>${mdInline(esc(m[1]))}</li>`); }
+    else if((m=t.match(/^>\s?(.*)$/))){ closeList(); out.push(`<blockquote>${mdInline(esc(m[1]))}</blockquote>`); }
+    else { closeList(); out.push(`<p>${mdInline(esc(t))}</p>`); }
+    i++;
+  }
+  closeList();
+  return out.join("");
+}
 function timeAgo(iso){
   if(!iso) return "";
   const d=(Date.now()-new Date(iso).getTime())/1000;
@@ -203,9 +243,11 @@ async function loadAll(){
     catch(e){ runsByRepo[r.repo]=null; } // repo sans Actions ou droit manquant : on dégrade
   }));
 
-  // 4. Détails PR (head sha, stats) + check-runs
+  // 4. Détails PR (head sha, stats) + check-runs — seulement pour les repos suivis :
+  // détailler les PRs hors flotte (2-3 requêtes chacune) gaspillait le quota pour rien.
+  const activeIds = new Set(active.map(r=>r.repo));
   const prDetails = {};
-  await Promise.all(openPRs.map(async p=>{
+  await Promise.all(openPRs.filter(p=>activeIds.has(p.repo)).map(async p=>{
     try{
       const d = await gh(`/repos/${OWNER}/${p.repo}/pulls/${p.number}`);
       let checks=null;
@@ -223,9 +265,9 @@ async function loadAll(){
     }catch(e){}
   }));
 
-  // 5. Commentaires des issues claude ouvertes (dialogue de cadrage)
+  // 5. Commentaires des issues claude ouvertes (dialogue de cadrage) — repos suivis seulement
   const commentsByIssue = {};
-  await Promise.all(claudeIssues.filter(i=>i.comments>0).map(async i=>{
+  await Promise.all(claudeIssues.filter(i=>i.comments>0 && activeIds.has(i.repo)).map(async i=>{
     try{ commentsByIssue[i.repo+"#"+i.number] = await gh(`/repos/${OWNER}/${i.repo}/issues/${i.number}/comments?per_page=100`); }
     catch(e){}
   }));
@@ -270,27 +312,27 @@ function buildModel(fleet, D){
       } else if(claudeRunning){
         bump("info");
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session Actions en cours`, small:timeAgo(is.updated_at), act:{id:"gh-issue", n:is.number, label:"Suivre"}});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage};
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage, body:is.body};
       } else if(lastC && lastC.user.login!==OWNER){
         bump("warn");
         lines.push({c:"warn", t:`${isCadrage?"Cadrage":"Issue"} #${is.number} « ${is.title} » — réponse de Claude à lire`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
         attention.push({c:"warn", repo:id, t:`Claude attend ta réponse sur « ${is.title} »`, small:timeAgo(lastC.created_at)});
         notify.push({key:`q:${id}#${is.number}:${lastC.id||lastC.created_at}`, kind:"q",
           title:`${id} — Claude attend ta réponse`, msg:is.title, repo:id, tag:"speech_balloon", prio:4});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage};
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage, body:is.body};
       } else if(idleH>2){
         bump("crit");
         lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — sans nouvelles depuis ${Math.round(idleH)} h (session en échec ?)`, act:{id:"relabel", n:is.number, label:"Relancer"}});
         attention.push({c:"crit", repo:id, t:`« ${is.title} » : sans nouvelles depuis ${Math.round(idleH)} h`});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage};
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage, body:is.body};
       } else if(lastC){
         bump("info");
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — réponse envoyée, la session reprend`, small:timeAgo(lastC.created_at)});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage};
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage, body:is.body};
       } else {
         bump("info");
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session en attente de démarrage`, small:timeAgo(is.created_at)});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage};
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage, body:is.body};
       }
       feed.push({ts:is.created_at, c:"info", repo:id, txt:`Issue #${is.number} « ${is.title} » ouverte.`});
     }
@@ -377,7 +419,15 @@ function buildModel(fleet, D){
   // les archivés, dont une PR ou une issue claude peut rester ouverte après archivage.
   const archived = new Set(repos.filter(r=>r.life==="archive").map(r=>r.id));
   const keep = x=>!archived.has(x.repo);
-  return { repos, ideas, attention: attention.filter(keep), feed: feed.filter(keep).slice(0,16), notify: notify.filter(keep) };
+  // Chroniques : rétention PAR repo (6 max chacun, 30 au total) — avec la coupe globale
+  // brute, un repo bavard vidait les « Chroniques du projet » de tous les autres.
+  const byRepo={}; const feedKept=[];
+  for(const f of feed){
+    if(!keep(f)) continue;
+    byRepo[f.repo]=(byRepo[f.repo]||0)+1;
+    if(byRepo[f.repo]<=6){ feedKept.push(f); if(feedKept.length>=30) break; }
+  }
+  return { repos, ideas, attention: attention.filter(keep), feed: feedKept, notify: notify.filter(keep) };
 }
 
 /* ================= Mode démo ================= */
@@ -401,8 +451,8 @@ function demoModel(){
           {number:6,name:"Ouverture de la PR",status:"queued",conclusion:null}]}],
         threadIssue:{num:18, title:"Export PDF", cadrage:false, comments:[
           {user:{login:OWNER}, body:"Ajouter un bouton pour exporter le bulletin courant en PDF."},
-          {user:{login:"claude-bot"}, body:"Spécification : bouton « Exporter en PDF » dans la barre du bulletin. Rendu client via l'API d'impression du navigateur (window.print) avec une feuille @media print dédiée — aucune dépendance. Critères : le PDF reprend le graphe et le tableau, sans la navigation. J'enchaîne l'implémentation."},
-          {user:{login:"claude-bot"}, body:"Fait : bouton ajouté, styles d'impression en place, PR #19 ouverte (Closes #18). Vérifié : l'aperçu d'impression montre le bulletin seul."},
+          {user:{login:"claude-bot"}, body:"## Spécification\n\n**Objectif** : bouton « Exporter en PDF » dans la barre du bulletin.\n\n- Rendu client via `window.print` + feuille `@media print` dédiée — aucune dépendance\n- Critères de done :\n- [x] le PDF reprend le graphe et le tableau\n- [ ] sans la navigation\n\nJ'enchaîne l'implémentation."},
+          {user:{login:"claude-bot"}, body:"Fait : bouton ajouté, styles d'impression en place, **PR #19 ouverte** (Closes #18).\n\n```bash\nnode scripts/verify.mjs   # VERIFY OK\n```\nVérifié : l'aperçu d'impression montre le bulletin seul."},
         ]}},
       {id:"talk-show-oral", type:"service-node", life:"actif", state:"warn", last:"hier", url:"#",
         pr:{num:15,title:"Lecture audio iOS",checks:"checks ✓ 3/3",files:4,add:118,del:22,body:"Débloque l'AudioContext au premier geste utilisateur. Résout l'issue #12."},
@@ -675,6 +725,16 @@ function openSecretPage(repoId){
   toast("🔑 Nom du secret copié : CLAUDE_CODE_OAUTH_TOKEN. Colle ta clé Claude dans l'onglet ouvert puis « Add secret » — aucun terminal.", 8000);
 }
 
+// Extrait la demande d'origine du corps d'une issue FleetView (sans le boilerplate
+// du parcours cadrage ni les règles de flotte) pour l'afficher en tête du dialogue.
+function requestFromIssueBody(body){
+  let s=String(body||"");
+  const m=s.match(/\*\*Demande brute :\*\*\s*([\s\S]*)$/);
+  if(m) s=m[1];
+  s=s.replace(/_Créée depuis FleetView[^_]*_\s*$/,"");
+  s=s.replace(/\n-{3,}\s*\nRègles de la flotte :[\s\S]*$/,"");
+  return s.trim();
+}
 function renderDetail(){
   const r=ui.openRepo&&model.repos.find(x=>x.id===ui.openRepo);
   $("#view-fleet").hidden=!!r;
@@ -702,7 +762,7 @@ function renderDetail(){
         <span class="eyebrow">Pull request #${r.pr.num} — ${esc(r.pr.title)}</span>
         <span class="pr-stats num">${esc(r.pr.checks)} · ${r.pr.files} fichiers · <span class="add">+${r.pr.add}</span> <span class="del">−${r.pr.del}</span></span>
       </div>
-      <p class="pr-body">${esc(r.pr.body)}</p>
+      <div class="pr-body md">${md(r.pr.body)}</div>
       <div class="block-actions">
         <button class="btn btn-primary" data-act="merge" data-n="${r.pr.num}">✓ Merger (squash)</button>
         <button class="btn" data-act="pr-comment" data-n="${r.pr.num}">💬 Demander des changements</button>
@@ -719,7 +779,10 @@ function renderDetail(){
     </div>`:"";
 
   const th=r.threadIssue;
-  const msgs=th?(th.comments||[]):[];
+  // Le fil s'ouvre sur TA demande (corps de l'issue) : sans elle, le dialogue
+  // commençait par la réponse de Claude, sans la question.
+  const req=th?requestFromIssueBody(th.body):"";
+  const msgs=th?[...(req?[{user:{login:OWNER}, body:req}]:[]), ...(th.comments||[])]:[];
   const threadBar=msgs.length>1?`
       <div class="thread-bar">
         <span class="count num">${msgs.length} messages</span>
@@ -736,7 +799,7 @@ function renderDetail(){
       <div class="thread" id="thread-box">${msgs.map((m,i)=>{
         const mine=m.user.login===OWNER;
         return `<div class="msg ${mine?"":"claude"}"><span class="who">${mine?"Toi":"Claude"} <span class="msg-n">${i+1}</span></span>
-          <span class="bubble">${esc(String(m.body||"").replace(/^@claude\s*/i,""))}</span></div>`;
+          <span class="bubble md">${md(String(m.body||"").replace(/^@claude\s*/i,""))}</span></div>`;
       }).join("")||`<p class="marginalia" style="margin:0">Pas encore de commentaire — la session écrit ici.</p>`}
       </div>
       <div class="reply">
@@ -1236,7 +1299,10 @@ function syncWhen(){
 // Ouvre la vue projet d'un repo (depuis « À traiter », une carte, ou un bouton de ligne).
 function openDetail(id){
   if(!model || !model.repos.some(x=>x.id===id)) return;
-  if(ui.openRepo!==id){ ui.openRepo=id; ui.threadBig=false; }
+  if(ui.openRepo!==id){
+    if(!ui.openRepo) ui.scrollY=window.scrollY; // position dans l'atelier, restaurée au retour
+    ui.openRepo=id; ui.threadBig=false;
+  }
   document.body.dataset.tab="flotte";
   document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab==="flotte")));
   renderDetail(); window.scrollTo({top:0});
@@ -1281,7 +1347,8 @@ document.addEventListener("click",async(e)=>{
       }
       try{
         switch(b.dataset.act){
-          case "back": ui.openRepo=null; ui.threadBig=false; renderDetail(); break;
+          case "back": ui.openRepo=null; ui.threadBig=false; renderDetail();
+            window.scrollTo({top:ui.scrollY||0}); ui.scrollY=0; break;
           case "open-thread": if(r) openDetail(r.id); break; // le fil est dans la vue projet
           case "open-pr": if(r) openDetail(r.id); break;     // le bloc PR aussi
           case "gh-issue": if(r) window.open(`${r.url}/issues/${n}`,"_blank"); break;
@@ -1525,11 +1592,19 @@ $("#btn-change-token").addEventListener("click",()=>{
 
 /* ================= Thème ================= */
 const themeSel=$("#theme-select");
+// La meta theme-color suit le thème : sans ça, la barre d'état mobile restait
+// parchemin même en thème sombre.
+function syncThemeColor(){
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute("content", getComputedStyle(document.body).backgroundColor);
+}
 document.documentElement.dataset.fvTheme=store.theme;
 themeSel.value=store.theme;
+syncThemeColor();
 themeSel.addEventListener("change",()=>{
   document.documentElement.dataset.fvTheme=themeSel.value;
   store.theme=themeSel.value;
+  syncThemeColor();
 });
 
 /* ================= Init ================= */
