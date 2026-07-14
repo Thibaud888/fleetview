@@ -227,33 +227,43 @@ function buildModel(fleet, D){
     const seen=(iso)=>{ if(iso && (!lastTs||iso>lastTs)) lastTs=iso; };
     const runs = D.runsByRepo[id]||[];
 
-    // Issues claude ouvertes (sessions / cadrage)
+    // Issues claude ouvertes (sessions / cadrage).
+    // Seuls les runs du workflow de dispatch (claude.yml) comptent comme « session » :
+    // un cron ou un map.yml qui tourne ne doit pas faire croire qu'une session est en cours.
+    const claudeRunning = runs.some(r=>["in_progress","queued"].includes(r.status) && (r.path||"").endsWith("/claude.yml"));
     for(const is of D.claudeIssues.filter(i=>i.repo===id)){
       seen(is.updated_at);
       const isCadrage = (is.labels||[]).some(l=>l.name==="cadrage");
       const comments = D.commentsByIssue[id+"#"+is.number]||[];
       const lastC = comments[comments.length-1];
-      const linkedPR = D.openPRs.find(p=>p.repo===id && (p.body||"").includes(`#${is.number}`));
-      const running = runs.some(r=>["in_progress","queued"].includes(r.status));
-      const ageH = (Date.now()-new Date(is.created_at))/3.6e6;
+      // Liaison PR ↔ issue : frontière de mot obligatoire (« #1 » ne doit pas matcher « #12 »).
+      const linkedPR = D.openPRs.find(p=>p.repo===id && new RegExp(`#${is.number}\\b`).test(p.body||""));
+      // L'âge se mesure depuis la DERNIÈRE activité du fil, pas depuis la création :
+      // un dialogue de cadrage vit naturellement plus de 2 h sans être en échec.
+      const lastActivity = lastC ? lastC.created_at : is.created_at;
+      const idleH = (Date.now()-new Date(lastActivity))/3.6e6;
 
-      if(isCadrage && lastC && lastC.user.login!==OWNER){
-        bump("warn");
-        lines.push({c:"warn", t:`Cadrage #${is.number} « ${is.title} » — réponse de Claude à lire`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
-        attention.push({c:"warn", repo:id, t:`Claude attend ta réponse sur « ${is.title} »`, small:timeAgo(lastC.created_at)});
-        notify.push({key:`q:${id}#${is.number}:${lastC.id||lastC.created_at}`, kind:"q",
-          title:`${id} — Claude attend ta réponse`, msg:is.title, repo:id, tag:"speech_balloon", prio:4});
-        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:true};
-      } else if(linkedPR){
+      if(linkedPR){
         // la PR parle pour elle (traitée plus bas)
-      } else if(running){
+      } else if(claudeRunning){
         bump("info");
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session Actions en cours`, small:timeAgo(is.updated_at), act:{id:"gh-issue", n:is.number, label:"Suivre"}});
         threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage};
-      } else if(ageH>2){
+      } else if(lastC && lastC.user.login!==OWNER){
+        bump("warn");
+        lines.push({c:"warn", t:`${isCadrage?"Cadrage":"Issue"} #${is.number} « ${is.title} » — réponse de Claude à lire`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
+        attention.push({c:"warn", repo:id, t:`Claude attend ta réponse sur « ${is.title} »`, small:timeAgo(lastC.created_at)});
+        notify.push({key:`q:${id}#${is.number}:${lastC.id||lastC.created_at}`, kind:"q",
+          title:`${id} — Claude attend ta réponse`, msg:is.title, repo:id, tag:"speech_balloon", prio:4});
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage};
+      } else if(idleH>2){
         bump("crit");
-        lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — pas de PR après ${Math.round(ageH)} h (session en échec ?)`, act:{id:"relabel", n:is.number, label:"Relancer"}});
-        attention.push({c:"crit", repo:id, t:`« ${is.title} » : session sans PR après ${Math.round(ageH)} h`});
+        lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — sans nouvelles depuis ${Math.round(idleH)} h (session en échec ?)`, act:{id:"relabel", n:is.number, label:"Relancer"}});
+        attention.push({c:"crit", repo:id, t:`« ${is.title} » : sans nouvelles depuis ${Math.round(idleH)} h`});
+        threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage};
+      } else if(lastC){
+        bump("info");
+        lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — réponse envoyée, la session reprend`, small:timeAgo(lastC.created_at)});
         threadIssue = threadIssue??{num:is.number, title:is.title, comments, cadrage:isCadrage};
       } else {
         bump("info");
@@ -341,11 +351,11 @@ function buildModel(fleet, D){
   });
 
   feed.sort((a,b)=>b.ts<a.ts?-1:1);
-  // « À traiter » et notifications ne concernent que les repos suivis : on écarte les
-  // archivés, dont une PR ou une issue claude peut rester ouverte après archivage.
+  // « À traiter », chroniques et notifications ne concernent que les repos suivis : on écarte
+  // les archivés, dont une PR ou une issue claude peut rester ouverte après archivage.
   const archived = new Set(repos.filter(r=>r.life==="archive").map(r=>r.id));
   const keep = x=>!archived.has(x.repo);
-  return { repos, ideas, attention: attention.filter(keep), feed: feed.slice(0,16), notify: notify.filter(keep) };
+  return { repos, ideas, attention: attention.filter(keep), feed: feed.filter(keep).slice(0,16), notify: notify.filter(keep) };
 }
 
 /* ================= Mode démo ================= */
@@ -357,7 +367,7 @@ function demoModel(){
       {id:"quiz-capitales", type:"cron-node", life:"actif", state:"crit", last:"il y a 40 min", url:"#",
         lines:[L("crit","publish-shorts.yml — 2 échecs consécutifs","il y a 40 min",{id:"demo",label:"Relancer"}), L("ok","retry-reels.yml — OK","cette nuit")]},
       {id:"bulletins-viz", type:"static · kit 1.0.0", life:"actif", state:"info", last:"il y a 12 min", url:"#",
-        lines:[L("info","Issue #18 « Export PDF » — session Actions en cours","12 min")],
+        lines:[L("info","Issue #18 « Export PDF » — session Actions en cours","12 min",{id:"open-thread",n:18,label:"Suivre"})],
         lastRun:{id:1, name:"Export PDF — session #18", wf:"claude.yml", status:"in_progress",
           conclusion:null, running:true, url:"#", started:new Date(Date.now()-4*60000).toISOString()},
         demoJobs:[{name:"claude", status:"in_progress", conclusion:null, steps:[
@@ -374,7 +384,7 @@ function demoModel(){
         ]}},
       {id:"talk-show-oral", type:"service-node", life:"actif", state:"warn", last:"hier", url:"#",
         pr:{num:15,title:"Lecture audio iOS",checks:"checks ✓ 3/3",files:4,add:118,del:22,body:"Débloque l'AudioContext au premier geste utilisateur. Résout l'issue #12."},
-        lines:[L("warn","PR #15 « Lecture audio iOS » — checks ✓, attend ta décision","depuis 15 h",{id:"demo",label:"Examiner"})]},
+        lines:[L("warn","PR #15 « Lecture audio iOS » — checks ✓, attend ta décision","depuis 15 h",{id:"open-pr",n:15,label:"Examiner"})]},
       {id:"veille-emploi", type:"cron-python", life:"actif", state:"calm", last:"07:05", url:"#",
         lines:[L("ok","veille.yml — OK","ce matin")]},
       {id:"digest-hebdo", type:"cron-python", life:"veille", state:"calm", last:"lundi", url:"#",
@@ -1020,11 +1030,7 @@ function readDeepLink(){
 function applyPendingOpen(){
   if(!pendingOpen || !model) return;
   const target=pendingOpen; pendingOpen=null;
-  if(model.repos.some(x=>x.id===target)){
-    ui.openRepo=target; document.body.dataset.tab="flotte";
-    document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab==="flotte")));
-    renderDetail(); window.scrollTo({top:0});
-  }
+  openDetail(target);
 }
 
 /* ================= Rafraîchissement ================= */
@@ -1111,9 +1117,17 @@ function syncWhen(){
 }
 
 /* ================= Événements ================= */
+// Ouvre la vue projet d'un repo (depuis « À traiter », une carte, ou un bouton de ligne).
+function openDetail(id){
+  if(!model || !model.repos.some(x=>x.id===id)) return;
+  if(ui.openRepo!==id){ ui.openRepo=id; ui.threadBig=false; }
+  document.body.dataset.tab="flotte";
+  document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab==="flotte")));
+  renderDetail(); window.scrollTo({top:0});
+}
 document.addEventListener("click",async(e)=>{
   const b=e.target.closest("button, a");
-  const r=ui.openRepo&&model?model.repos.find(x=>x.id===ui.openRepo):null;
+  let r=ui.openRepo&&model?model.repos.find(x=>x.id===ui.openRepo):null;
 
   if(b){
     if(b.dataset.filter!==undefined){ ui.filter=b.dataset.filter; renderFilters(); renderGrid(); return; }
@@ -1123,12 +1137,7 @@ document.addEventListener("click",async(e)=>{
       if(b.dataset.tab!=="flotte"){ ui.openRepo=null; renderDetail(); }
       return;
     }
-    if(b.dataset.open!==undefined){
-      ui.openRepo=b.dataset.open; ui.threadBig=false;
-      document.body.dataset.tab="flotte";
-      document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab==="flotte")));
-      renderDetail(); window.scrollTo({top:0}); return;
-    }
+    if(b.dataset.open!==undefined){ openDetail(b.dataset.open); return; }
     if(b.dataset.newfor!==undefined){ openModal({repo:b.dataset.newfor}); return; }
     if(b.dataset.launch!==undefined){
       const idea=model.ideas.find(i=>i.num===Number(b.dataset.launch));
@@ -1141,11 +1150,17 @@ document.addEventListener("click",async(e)=>{
     }
     if(b.dataset.act!==undefined){
       const n=b.dataset.n;
+      // Bouton d'une carte de l'atelier (vue projet pas encore ouverte) : le repo
+      // se déduit de la carte — sans ça, ces boutons ne feraient rien depuis la grille.
+      if(!r && model){
+        const card=e.target.closest(".card");
+        if(card) r=model.repos.find(x=>x.id===card.dataset.card);
+      }
       try{
         switch(b.dataset.act){
           case "back": ui.openRepo=null; ui.threadBig=false; renderDetail(); break;
-          case "open-thread": renderDetail(); break; // le fil est déjà dans la vue
-          case "open-pr": /* bloc PR déjà dans la vue détail */ if(r) renderDetail(); break;
+          case "open-thread": if(r) openDetail(r.id); break; // le fil est dans la vue projet
+          case "open-pr": if(r) openDetail(r.id); break;     // le bloc PR aussi
           case "gh-issue": if(r) window.open(`${r.url}/issues/${n}`,"_blank"); break;
           case "merge": if(r){ b.disabled=true; await mergePr(r.id,n); await refresh(); } break;
           case "pr-comment": $("#pr-reply").hidden=false; $("#pr-reply-text").focus(); break;
@@ -1158,8 +1173,7 @@ document.addEventListener("click",async(e)=>{
             if(ui.threadBig){ const ms=document.querySelectorAll("#thread-box .msg"); if(ms.length) ms[ms.length-1].scrollIntoView({block:"end"}); } break;
           case "thread-top": { const m=document.querySelector("#thread-box .msg"); if(m) m.scrollIntoView({behavior:"smooth",block:"nearest"}); } break;
           case "thread-bottom": { const ms=document.querySelectorAll("#thread-box .msg"); if(ms.length) ms[ms.length-1].scrollIntoView({behavior:"smooth",block:"nearest"}); } break;
-          case "rerun": { const repoId=r?r.id:(e.target.closest(".card")||{}).dataset?.card;
-            if(repoId){ b.disabled=true; await rerunRun(repoId,n); await refresh(); } } break;
+          case "rerun": if(r){ b.disabled=true; await rerunRun(r.id,n); await refresh(); } break;
           case "relabel": if(r){ b.disabled=true;
             await sendComment(r.id,n,"la session ne semble pas avoir abouti — reprends cette issue depuis le début."); await refresh(); } break;
           case "life": if(r){ b.disabled=true; await setLifecycle(r.id,n);
@@ -1173,7 +1187,7 @@ document.addEventListener("click",async(e)=>{
     }
   }
   const card=e.target.closest(".card");
-  if(card&&!b){ ui.openRepo=card.dataset.card; renderDetail(); window.scrollTo({top:0}); }
+  if(card&&!b) openDetail(card.dataset.card);
 });
 
 $("#form-new").addEventListener("submit",async(e)=>{
