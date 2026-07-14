@@ -31,9 +31,9 @@ scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après
 | Ajouter une colonne UI | `index.html` + `app.js:render*()` | HTML structure + fonction render correspondante |
 | Nouveau thème | `styles.css` | Ajouter `html[data-fv-theme="nom"]` + vars CSS |
 | Modifier l'API GitHub | `app.js:gh()` | Fonction wrapper (headers, retry, erreurs, quota) |
-| Notifications ntfy | `app.js:notifyNtfy()` + index.html settings | Sujet localStorage, handlers cliquables, testable |
+| Notifications ntfy | `app.js:publishNtfy()` + index.html settings | Sujet localStorage, handlers cliquables, testable |
 | Protocole cadrage | `app.js:~800` | Parse issue phase 1 (spécif) / phase 2 (après GO) |
-| Journal de run | `app.js:renderLog()` + `styles.css .log` | Actualisation ~4,5s pendant run, lien vers logs bruts |
+| Journal de run | `app.js:renderJournalInto()` + `styles.css .log` | Actualisation ~4,5s pendant run, lien vers logs bruts |
 | Changer l'icône | `icon.svg` puis `node scripts/icons.mjs` | Édite SVG, régénère PNG (192, 512, maskable, apple) |
 
 ## Flux de données
