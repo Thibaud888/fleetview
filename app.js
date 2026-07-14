@@ -48,7 +48,6 @@ let model = null;          // { repos:[], ideas:[], attention:[], feed:[], notif
 let fleetFile = null;      // { json, sha }
 // threadBig : n° de l'issue dont le fil est en plein écran (null = aucun) — plusieurs fils peuvent coexister.
 let ui = { filter:"all", openRepo:null, lastSync:null, loading:false, threadBig:null };
-let ideaLaunchCtx = null;  // idée en cours de lancement (depuis le codex)
 let ideaUI = { repoFilter:"all", open:null, edit:null }; // état du codex (filtre projet, idée dépliée/éditée)
 const labelCache = new Set();
 let rateInfo = { remaining:null, limit:null, reset:null }; // quota API GitHub (en-têtes x-ratelimit-*)
@@ -58,6 +57,7 @@ let runWatch = null;       // suivi live d'un run Actions : {repo, runId, box, t
 const secretCache = new Map(); // repo → "present" | "absent" | "unknown" (secret Claude)
 let tasks=null;                // items `- [ ]` des BACKLOG.md de la flotte (null = pas encore lus)
 let tasksLoading=false, tasksAt=null;
+let tasksCodexOnly=false;      // filtre 📱 : seulement les tâches promues depuis le codex
 let claudeOpenRepos=new Set(); // repos avec une issue `claude` ouverte (badge + garde anti-collision)
 
 /* ================= Utilitaires ================= */
@@ -415,7 +415,8 @@ function buildModel(fleet, D){
     const catRaw=(names.find(n=>n.startsWith("cat:"))||"").slice(4);
     const desc=body.replace(/\*\*Projet\*\*\s*:\s*\S+\s*/,"").replace(/_Créée depuis FleetView\.?_\s*$/,"").trim();
     return {num:i.number, p, repo:m?m[1]:"flotte", t:i.title, desc,
-      cat:IDEA_CATS[catRaw]?catRaw:null, url:i.html_url, created:i.created_at};
+      cat:IDEA_CATS[catRaw]?catRaw:null, waiting:names.includes("à-préciser"),
+      url:i.html_url, created:i.created_at};
   });
 
   feed.sort((a,b)=>b.ts<a.ts?-1:1);
@@ -475,7 +476,7 @@ function demoModel(){
     ],
     ideas:[
       {num:1,p:"P1",repo:"quiz-capitales",t:"Miniatures automatiques pour les shorts",desc:"Générer la miniature depuis la première question du quiz, avec le drapeau en fond.",cat:"feature",url:"#"},
-      {num:2,p:"P2",repo:"bulletins-viz",t:"Comparaison des moyennes entre trimestres",desc:"",cat:"feature",url:"#"},
+      {num:2,p:"P2",repo:"bulletins-viz",t:"Rendre les bulletins plus lisibles",desc:"",cat:"feature",url:"#",waiting:true},
       {num:3,p:"P3",repo:"flotte",t:"Statusline + raccourcis desktop",desc:"",cat:"exploration",url:"#"},
       {num:4,p:"P3",repo:"flotte",t:"Corriger l'alignement du pied de page",desc:"",cat:"bug",url:"#"},
     ],
@@ -620,12 +621,12 @@ function renderIdeas(){
     return `
     <div class="idea${open?" open":""}" data-idea="${i.num}">
       <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
-      <span class="idea-body" data-idea-toggle="${i.num}" role="button" tabindex="0">${esc(i.t)}<span class="idea-repo">${esc(i.repo)}${i.desc?" · …":""}</span></span>
-      <a class="idea-launch" href="https://claude.ai/code" target="_blank" rel="noopener" data-cloud="${i.num}" title="Session cloud interactive (claude.ai/code)">🌩</a>
-      <button class="idea-launch" data-launch="${i.num}" title="Lancer en issue directe (Actions, fire-and-forget)">🚀</button>
+      <span class="idea-body" data-idea-toggle="${i.num}" role="button" tabindex="0">${esc(i.t)}<span class="idea-repo">${esc(i.repo)}${i.waiting?" · ⏳ à préciser":""}${i.desc?" · …":""}</span></span>
+      <button class="idea-launch" data-cadrer="${i.num}" title="${i.waiting?"Relancer le cadrage (après ta réponse sur l'issue)":"Cadrer maintenant : l'idée part au backlog, ou reçoit des questions si elle est floue"}">🪶</button>
     </div>
     ${open?`<div class="idea-more">${edit?ideaEditHtml(i):`
       ${i.desc?`<p class="idea-desc">${esc(i.desc)}</p>`:""}
+      ${i.waiting?`<p class="idea-desc">⏳ Le cadrage t'a posé des questions — ouvre « issue ↗ », réponds en commentaire, puis 🪶 pour relancer (sinon, repassage chaque matin).</p>`:""}
       <div class="idea-tools">
         <button class="btn-mini" data-idea-edit="${i.num}">✎ Modifier</button>
         <button class="btn-mini" data-idea-del="${i.num}">🗑 Supprimer</button>
@@ -865,9 +866,8 @@ function renderDetail(){
         ${relatedIdeas.map(i=>`
           <div class="sub-row">
             <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
-            <span style="flex:1">${esc(i.t)}</span>
-            <a class="idea-launch" href="https://claude.ai/code" target="_blank" rel="noopener" data-cloud="${i.num}" title="Session cloud interactive">🌩</a>
-            <button class="idea-launch" data-launch="${i.num}" title="Lancer en issue directe (Actions, fire-and-forget)">🚀</button>
+            <span style="flex:1">${esc(i.t)}${i.waiting?` <span class="marginalia">⏳ à préciser</span>`:""}</span>
+            <button class="idea-launch" data-cadrer="${i.num}" title="${i.waiting?"Relancer le cadrage (après ta réponse sur l'issue)":"Cadrer maintenant : l'idée part au backlog, ou reçoit des questions si elle est floue"}">🪶</button>
           </div>`).join("")}
       </div>`:""}
       ${relatedFeed.length?`
@@ -995,11 +995,14 @@ async function removeIdea(num){
   ideaUI.open=null; ideaUI.edit=null;
   toast("🗑 Idée retirée du codex.");
 }
-async function closeIdea(num, launchedUrl){
-  try{
-    await gh(`/repos/${OWNER}/${META}/issues/${num}/comments`,{method:"POST",body:{body:`→ lancée : ${launchedUrl}`}});
-    await gh(`/repos/${OWNER}/${META}/issues/${num}`,{method:"PATCH",body:{state:"closed"}});
-  }catch(e){}
+// Cadrage à la demande : déclenche le workflow codex-cadrage.yml de claude-ops sur UNE idée.
+// Le triage (promotion au backlog ou questions 🪶 + label `à-préciser`) se fait côté Actions ;
+// sans ce bouton, le cron quotidien s'en charge de toute façon.
+async function cadrerIdea(num){
+  if(demo){ toast("Mode démo — rien n'est envoyé. En réel : l'idée part au backlog du projet, ou reçoit des questions si elle est floue."); return; }
+  await gh(`/repos/${OWNER}/${META}/actions/workflows/codex-cadrage.yml/dispatches`,
+    {method:"POST",body:{ref:"main",inputs:{issue:String(num)}}});
+  toast("🪶 Cadrage lancé — l'idée sera promue au backlog du projet, ou recevra des questions sur son issue (≈ 1 min).", 6500);
 }
 async function sendComment(repo,num,text){
   if(demo){ toast("Mode démo — rien n'est envoyé."); return; }
@@ -1077,7 +1080,7 @@ async function newProject(name,type,priv){
 // actif, inutile de les payer toutes les 2 minutes.
 function demoTasks(){
   return [
-    {repo:"quiz-capitales", title:"Miniatures automatiques pour les shorts", desc:"Générer la miniature depuis la première question du quiz, drapeau en fond ; DoD : 3 shorts publiés avec miniature.", equipped:true},
+    {repo:"quiz-capitales", title:"Miniatures automatiques pour les shorts", desc:"Générer la miniature depuis la première question du quiz, drapeau en fond ; DoD : 3 shorts publiés avec miniature.", equipped:true, codex:true},
     {repo:"quiz-capitales", title:"Mode révision des capitales déjà vues", desc:"", equipped:true},
     {repo:"bulletins-viz", title:"Comparaison des moyennes entre trimestres", desc:"Vue superposée T1/T2/T3 ; DoD : verify passe et la vue s'affiche en démo.", equipped:true},
     {repo:"talk-show-oral", title:"Couvrir un texte du parcours encore absent", desc:"", equipped:true},
@@ -1097,9 +1100,11 @@ async function loadTasks(force){
         const f=await gh(`/repos/${OWNER}/${fr.repo}/contents/BACKLOG.md`);
         for(const line of b64d(f.content).split(/\r?\n/)){
           if(!line.startsWith("- [ ]")) continue;
-          const body=line.slice(5).trim();
+          // 📱 en fin d'item = tâche promue depuis le codex (workflow codex-cadrage.yml)
+          const codex=/📱\s*$/u.test(line);
+          const body=(codex?line.replace(/\s*📱\s*$/u,""):line).slice(5).trim();
           const dash=body.indexOf(" — ");
-          out.push({repo:fr.repo, equipped:!!fr.kit_version,
+          out.push({repo:fr.repo, equipped:!!fr.kit_version, codex,
             title: dash>0?body.slice(0,dash):body.slice(0,160),
             desc:  dash>0?body.slice(dash+3):""});
         }
@@ -1113,11 +1118,16 @@ function renderTasks(){
   $("#tasks-count").textContent = tasks ? String(tasks.length) : "—";
   const note=$("#tasks-note");
   if(note) note.textContent = tasksLoading ? "lecture…" : (tasksAt ? "lu "+timeAgo(tasksAt.toISOString()) : "");
+  const fbtn=$("#tasks-codex-filter");
+  if(fbtn){ fbtn.setAttribute("aria-pressed",String(tasksCodexOnly)); fbtn.classList.toggle("on",tasksCodexOnly); }
   if(tasksLoading && !tasks){ box.innerHTML=`<p class="marginalia" style="padding:12px 15px">Lecture des BACKLOG.md de la flotte…</p>`; return; }
   if(!tasks) return; // pas encore demandé : on garde le texte d'accueil
   if(!tasks.length){ box.innerHTML=`<p class="marginalia" style="padding:12px 15px">Aucune tâche ouverte — tous les backlogs sont au propre.</p>`; return; }
   const byRepo={};
-  tasks.forEach((t,i)=>{ (byRepo[t.repo]=byRepo[t.repo]||[]).push(i); });
+  // Filtre 📱 : ne garder que les tâches promues depuis le codex — indices d'origine
+  // préservés (les lanceurs ⚡/🌩 pointent dans `tasks` par index).
+  tasks.forEach((t,i)=>{ if(tasksCodexOnly&&!t.codex) return; (byRepo[t.repo]=byRepo[t.repo]||[]).push(i); });
+  if(!Object.keys(byRepo).length){ box.innerHTML=`<p class="marginalia" style="padding:12px 15px">Aucune tâche promue depuis le codex — le filtre 📱 est actif.</p>`; return; }
   let html="";
   for(const repo of Object.keys(byRepo).sort()){
     const busy=claudeOpenRepos.has(repo);
@@ -1128,7 +1138,7 @@ function renderTasks(){
         : busy ? `<button class="idea-launch" disabled title="Issue claude déjà ouverte sur ce repo — 1 session à la fois (anti-collision)">⚡</button>`
         : `<button class="idea-launch" data-task-direct="${i}" title="Lancer en issue directe (session Actions)">⚡</button>`;
       html+=`<div class="task">
-        <span class="task-body">${esc(t.title)}${t.desc?`<span class="task-desc">${esc(t.desc.length>200?t.desc.slice(0,200)+"…":t.desc)}</span>`:""}</span>
+        <span class="task-body">${esc(t.title)}${t.codex?` <span title="Promue depuis le codex">📱</span>`:""}${t.desc?`<span class="task-desc">${esc(t.desc.length>200?t.desc.slice(0,200)+"…":t.desc)}</span>`:""}</span>
         ${zap}
         <a class="idea-launch" href="https://claude.ai/code" target="_blank" rel="noopener" data-task-cloud="${i}" title="Session cloud interactive (claude.ai/code)">🌩</a>
       </div>`;
@@ -1357,10 +1367,9 @@ function openModal(opts){
   // sinon "cloud" (session interactive claude.ai/code) — le défaut recommandé pour cadrer.
   const parcours=opts.parcours||"cloud";
   const rp=document.querySelector(`input[name="f-when"][value="${parcours}"]`); if(rp) rp.checked=true;
-  $("#modal-title").textContent=opts.title?"Lancer cette idée":(parcours==="box"?"Nouvelle idée":"Nouvelle demande");
+  $("#modal-title").textContent=opts.title?"Lancer cette tâche":(parcours==="box"?"Nouvelle idée":"Nouvelle demande");
   $("#opt-box").style.display=opts.hideBox?"none":"";
   $("#modal-note").textContent=demo?"Mode démo : aucune action réelle.":"";
-  if(!opts.title) ideaLaunchCtx=null;
   syncWhen();
   modal.showModal();
   setTimeout(()=>$(opts.title?"#f-desc":"#f-title").focus(),50);
@@ -1401,19 +1410,17 @@ document.addEventListener("click",async(e)=>{
     }
     if(b.dataset.open!==undefined){ openDetail(b.dataset.open); return; }
     if(b.dataset.newfor!==undefined){ openModal({repo:b.dataset.newfor}); return; }
-    if(b.dataset.launch!==undefined){
-      const idea=model.ideas.find(i=>i.num===Number(b.dataset.launch));
-      if(idea){ ideaLaunchCtx=idea; openModal({repo:idea.repo==="flotte"?"flotte":idea.repo,title:idea.t,desc:idea.desc,hideBox:true,parcours:"direct"}); }
+    // 🪶 Cadrer : présent au codex ET dans la vue projet (« Au codex pour ce projet »),
+    // d'où ce handler global — l'écouteur du panneau #ideas ne le gère pas (pas de doublon).
+    if(b.dataset.cadrer!==undefined){
+      b.disabled=true;
+      try{ await cadrerIdea(Number(b.dataset.cadrer)); }
+      catch(err){ toast("Échec : "+errMsg(err), 6000); }
+      b.disabled=false;
       return;
     }
     // Session cloud interactive : les 🌩 sont de vrais liens <a> — on copie le prompt et on
     // laisse le lien s'ouvrir (meilleure chance d'ouvrir l'app Claude sur mobile).
-    if(b.dataset.cloud!==undefined){
-      const idea=model.ideas.find(i=>i.num===Number(b.dataset.cloud));
-      if(idea) launchCloudFromLink(e, {repo:idea.repo, title:idea.t, desc:idea.desc});
-      else e.preventDefault(); // idée introuvable : ne pas ouvrir claude.ai pour rien
-      return;
-    }
     if(b.dataset.cloudRepo!==undefined){ launchCloudFromLink(e, {repo:b.dataset.cloudRepo}); return; }
     // Tâches de la flotte : ⚡ pré-remplit la modale Demande (parcours issue directe, tu confirmes),
     // 🌩 compose le prompt de session cloud avec la tâche et sa DoD.
@@ -1490,16 +1497,14 @@ $("#form-new").addEventListener("submit",async(e)=>{
   const mode=document.querySelector('input[name="f-when"]:checked').value;
   // Parcours cloud : on ne crée pas d'issue — on compose le prompt, on copie, on ouvre claude.ai/code.
   // (Doit rester dans le geste de submit pour l'écriture presse-papier et l'ouverture d'onglet.)
-  if(mode==="cloud"){ launchCloud({repo,title,desc}); ideaLaunchCtx=null; modal.close(); return; }
+  if(mode==="cloud"){ launchCloud({repo,title,desc}); modal.close(); return; }
   const modelChoice=document.querySelector('input[name="f-model"]:checked').value;
   const prio=document.querySelector('input[name="f-prio"]:checked').value;
   const cat=$("#f-cat").value;
   const btn=$("#f-submit");
   btn.disabled=true; btn.textContent="Envoi…";
   try{
-    const is=await createRequest({repo,title,desc,mode,modelChoice,prio,cat});
-    const ctx=ideaLaunchCtx; ideaLaunchCtx=null;
-    if(ctx&&is&&mode!=="box") await closeIdea(ctx.num,is.html_url);
+    await createRequest({repo,title,desc,mode,modelChoice,prio,cat});
     modal.close();
     await refresh(false);
   }catch(err){ toast("Échec : "+errMsg(err), 6000); }
@@ -1528,8 +1533,9 @@ $("#form-projet").addEventListener("submit",async(e)=>{
 
 $("#btn-refresh").addEventListener("click",()=>refresh());
 $("#tasks-reload").addEventListener("click",()=>loadTasks(true));
+$("#tasks-codex-filter").addEventListener("click",()=>{ tasksCodexOnly=!tasksCodexOnly; renderTasks(); });
 
-/* Codex : déplier, éditer, supprimer, filtrer par projet */
+/* Codex : déplier, éditer, supprimer, filtrer par projet (🪶 Cadrer = handler global) */
 $("#ideas").addEventListener("click",async(e)=>{
   const t=e.target.closest("[data-idea-toggle],[data-idea-edit],[data-idea-del],[data-idea-save],[data-idea-cancel]");
   if(!t) return;
