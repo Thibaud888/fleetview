@@ -55,6 +55,9 @@ let rateWarned = false;    // pour ne toaster l'alerte « quota bas » qu'une fo
 let pendingOpen = null;    // repo à ouvrir au chargement (deep-link ntfy ?repo=…)
 let runWatch = null;       // suivi live d'un run Actions : {repo, runId, box, timer, lastJobs, demoJobs}
 const secretCache = new Map(); // repo → "present" | "absent" | "unknown" (secret Claude)
+let tasks=null;                // items `- [ ]` des BACKLOG.md de la flotte (null = pas encore lus)
+let tasksLoading=false, tasksAt=null;
+let claudeOpenRepos=new Set(); // repos avec une issue `claude` ouverte (badge + garde anti-collision)
 
 /* ================= Utilitaires ================= */
 const $ = (s)=>document.querySelector(s);
@@ -218,7 +221,7 @@ function renderRate(){
 
 /* ================= Chargement & modèle ================= */
 async function loadAll(){
-  if(demo){ model = demoModel(); ui.lastSync=new Date(); return; }
+  if(demo){ model = demoModel(); claudeOpenRepos=new Set(["bulletins-viz"]); ui.lastSync=new Date(); return; }
   // 1. Registre
   const ff = await gh(`/repos/${OWNER}/${META}/contents/${FLEET_PATH}`);
   fleetFile = { sha: ff.sha, json: JSON.parse(b64d(ff.content)) };
@@ -231,6 +234,7 @@ async function loadAll(){
     gh(`/repos/${OWNER}/${META}/issues?labels=${enc("idée")}&state=open&per_page=100`),
   ]);
   const claudeIssues = (issuesRes.items||[]).map(it=>({...it, repo: it.repository_url.split("/").pop()}));
+  claudeOpenRepos = new Set(claudeIssues.map(i=>i.repo));
   const openPRs = (prsRes.items||[]).map(it=>({...it, repo: it.repository_url.split("/").pop()}));
 
   // 3. Runs Actions : repos avec crons ou avec activité
@@ -905,6 +909,7 @@ function renderAll(){
   if(!model) return;
   renderSummary(); renderAttention(); renderFilters(); renderGrid();
   renderArchived(); renderIdeas(); renderFeed(); renderDetail(); renderSyncNote();
+  if(tasks) renderTasks(); // déjà lues : rafraîchit badges 🔵 et gardes ⚡ (jamais de relecture ici)
 }
 
 /* ================= Actions (écritures API) ================= */
@@ -1047,6 +1052,72 @@ async function newProject(name,type,priv){
   try{ navigator.clipboard && navigator.clipboard.writeText("CLAUDE_CODE_OAUTH_TOKEN"); }catch(e){}
   try{ window.open(secretUrl,"_blank","noopener"); }catch(e){}
   toast(`⚒ ${name} créé et équipé. Onglet ouvert pour poser le secret Claude (nom copié) — colle ta clé, « Add secret », et la première session peut partir.`, 8000);
+}
+
+/* ================= Tâches de la flotte (BACKLOG.md agrégés) ================= */
+// Les BACKLOG.md par repo sont LA liste des tâches cadrées (le codex = idées non cadrées).
+// Lecture à la demande (bouton ⟳ / onglet Tâches), pas à chaque relevé : ~1 requête par repo
+// actif, inutile de les payer toutes les 2 minutes.
+function demoTasks(){
+  return [
+    {repo:"quiz-capitales", title:"Miniatures automatiques pour les shorts", desc:"Générer la miniature depuis la première question du quiz, drapeau en fond ; DoD : 3 shorts publiés avec miniature.", equipped:true},
+    {repo:"quiz-capitales", title:"Mode révision des capitales déjà vues", desc:"", equipped:true},
+    {repo:"bulletins-viz", title:"Comparaison des moyennes entre trimestres", desc:"Vue superposée T1/T2/T3 ; DoD : verify passe et la vue s'affiche en démo.", equipped:true},
+    {repo:"talk-show-oral", title:"Couvrir un texte du parcours encore absent", desc:"", equipped:true},
+  ];
+}
+async function loadTasks(force){
+  if(tasksLoading) return;
+  if(tasks && !force){ renderTasks(); return; }
+  tasksLoading=true; renderTasks();
+  try{
+    if(demo){ tasks=demoTasks(); tasksAt=new Date(); return; }
+    const fleet=(fleetFile&&fleetFile.json&&fleetFile.json.repos)||[];
+    const actifs=fleet.filter(r=>String(r.statut||"").toLowerCase()==="actif"||!r.statut);
+    const out=[];
+    await Promise.all(actifs.map(async fr=>{
+      try{
+        const f=await gh(`/repos/${OWNER}/${fr.repo}/contents/BACKLOG.md`);
+        for(const line of b64d(f.content).split(/\r?\n/)){
+          if(!line.startsWith("- [ ]")) continue;
+          const body=line.slice(5).trim();
+          const dash=body.indexOf(" — ");
+          out.push({repo:fr.repo, equipped:!!fr.kit_version,
+            title: dash>0?body.slice(0,dash):body.slice(0,160),
+            desc:  dash>0?body.slice(dash+3):""});
+        }
+      }catch(e){} // 404 : pas de BACKLOG.md — rien à lister
+    }));
+    tasks=out; tasksAt=new Date();
+  } finally { tasksLoading=false; renderTasks(); }
+}
+function renderTasks(){
+  const box=$("#tasks-box"); if(!box) return;
+  $("#tasks-count").textContent = tasks ? String(tasks.length) : "—";
+  const note=$("#tasks-note");
+  if(note) note.textContent = tasksLoading ? "lecture…" : (tasksAt ? "lu "+timeAgo(tasksAt.toISOString()) : "");
+  if(tasksLoading && !tasks){ box.innerHTML=`<p class="marginalia" style="padding:12px 15px">Lecture des BACKLOG.md de la flotte…</p>`; return; }
+  if(!tasks) return; // pas encore demandé : on garde le texte d'accueil
+  if(!tasks.length){ box.innerHTML=`<p class="marginalia" style="padding:12px 15px">Aucune tâche ouverte — tous les backlogs sont au propre.</p>`; return; }
+  const byRepo={};
+  tasks.forEach((t,i)=>{ (byRepo[t.repo]=byRepo[t.repo]||[]).push(i); });
+  let html="";
+  for(const repo of Object.keys(byRepo).sort()){
+    const busy=claudeOpenRepos.has(repo);
+    html+=`<div class="cat-head eyebrow">${esc(repo)} · <span class="num">${byRepo[repo].length}</span>${busy?` <span class="task-busy">🔵 session en cours</span>`:""}</div>`;
+    for(const i of byRepo[repo]){
+      const t=tasks[i];
+      const zap = !t.equipped ? `<button class="idea-launch" disabled title="Repo non équipé du kit — passe /equiper d'abord">⚡</button>`
+        : busy ? `<button class="idea-launch" disabled title="Issue claude déjà ouverte sur ce repo — 1 session à la fois (anti-collision)">⚡</button>`
+        : `<button class="idea-launch" data-task-direct="${i}" title="Lancer en issue directe (session Actions)">⚡</button>`;
+      html+=`<div class="task">
+        <span class="task-body">${esc(t.title)}${t.desc?`<span class="task-desc">${esc(t.desc.length>200?t.desc.slice(0,200)+"…":t.desc)}</span>`:""}</span>
+        ${zap}
+        <a class="idea-launch" href="https://claude.ai/code" target="_blank" rel="noopener" data-task-cloud="${i}" title="Session cloud interactive (claude.ai/code)">🌩</a>
+      </div>`;
+    }
+  }
+  box.innerHTML=html;
 }
 
 /* ================= Lanceur de session cloud ================= */
@@ -1308,6 +1379,7 @@ document.addEventListener("click",async(e)=>{
       document.body.dataset.tab=b.dataset.tab;
       document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
       if(b.dataset.tab!=="flotte"){ ui.openRepo=null; renderDetail(); }
+      if(b.dataset.tab==="taches") loadTasks(); // premier tap = lecture des backlogs
       return;
     }
     if(b.dataset.open!==undefined){ openDetail(b.dataset.open); return; }
@@ -1326,6 +1398,19 @@ document.addEventListener("click",async(e)=>{
       return;
     }
     if(b.dataset.cloudRepo!==undefined){ launchCloudFromLink(e, {repo:b.dataset.cloudRepo}); return; }
+    // Tâches de la flotte : ⚡ pré-remplit la modale Demande (parcours issue directe, tu confirmes),
+    // 🌩 compose le prompt de session cloud avec la tâche et sa DoD.
+    if(b.dataset.taskDirect!==undefined){
+      const t=tasks&&tasks[Number(b.dataset.taskDirect)];
+      if(t) openModal({repo:t.repo, title:t.title, desc:t.desc, hideBox:true, parcours:"direct"});
+      return;
+    }
+    if(b.dataset.taskCloud!==undefined){
+      const t=tasks&&tasks[Number(b.dataset.taskCloud)];
+      if(t) launchCloudFromLink(e, {repo:t.repo, title:t.title, desc:t.desc});
+      else e.preventDefault();
+      return;
+    }
     if(b.dataset.unarchive!==undefined){
       try{ await setLifecycle(b.dataset.unarchive,"actif"); await refresh(); }catch(err){ toast("Échec : "+errMsg(err)); }
       return;
@@ -1422,6 +1507,7 @@ $("#form-projet").addEventListener("submit",async(e)=>{
 });
 
 $("#btn-refresh").addEventListener("click",()=>refresh());
+$("#tasks-reload").addEventListener("click",()=>loadTasks(true));
 
 /* Codex : déplier, éditer, supprimer, filtrer par projet */
 $("#ideas").addEventListener("click",async(e)=>{

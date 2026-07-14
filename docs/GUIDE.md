@@ -86,9 +86,17 @@ utile pour découvrir l'interface sans token, ou faire une capture. Aucune actio
   En attente / Calmes / En veille. **Clique une carte** pour n'ouvrir que ce projet.
 - **Vue projet** — le détail d'un seul repo : ses lignes d'état, sa PR (avec merge), le
   dialogue avec Claude, ses idées, ses chroniques, et les actions de cycle de vie.
-- **Codex des idées** — la boîte à idées priorisée (voir §5).
+- **Tâches de la flotte** — la lecture agrégée des **`BACKLOG.md` de tous les repos actifs**
+  (les tâches cadrées, distinctes des idées du codex). Elle se charge **à la demande**
+  (bouton « ⟳ Lire », ou premier tap sur l'onglet Tâches en mobile) pour ne pas consommer
+  de quota à chaque relevé. Chaque item porte ses deux lanceurs : **⚡** (issue directe,
+  pré-remplit la modale Demande) et **🌩** (session cloud avec la tâche et sa DoD dans le
+  prompt). Un repo dont une session est déjà en cours est marqué 🔵 et son ⚡ est désactivé
+  (anti-collision : 1 session à la fois par repo).
+- **Codex des idées** — la boîte à idées priorisée (voir §5). Une idée **non cadrée** vit au
+  codex ; une tâche **cadrée avec sa DoD** vit dans le `BACKLOG.md` du repo (vue Tâches).
 - **Chroniques** — le fil de ce qui s'est passé (PRs, crons, sessions), par jour.
-- **Sur téléphone** — les trois zones deviennent trois onglets en bas (Atelier / Codex /
+- **Sur téléphone** — les zones deviennent des onglets en bas (Atelier / Tâches / Codex /
   Chroniques) + un bouton ＋ central.
 
 ---
@@ -164,6 +172,16 @@ Tu décris **quoi**, le système s'occupe du **comment**. Trois parcours, dans l
 quand il faut cadrer, préciser, répondre à des questions. L'issue directe est un **envoi sans
 retour** — idéale pour un lot d'items déjà spécifiés qui avancent pendant que tu fais autre chose.
 Les deux tournent sur ton **abonnement**, pas sur des crédits API.
+
+> ⚠️ Un item **gros ou ambigu** ne part pas en issue directe : une session Actions plafonnée en
+> tours échoue sans PR (vécu). Passe par la **session cloud** (🌩) ou, sur l'ordinateur, par la
+> skill **`/backlog <repo> <n°>`** de claude-ops qui traite l'item dans ta session locale.
+
+**Et depuis l'ordinateur ?** Les mêmes tâches sont accessibles dans une session Claude Code
+locale avec la skill **`/backlog`** (vue agrégée de toute la flotte), `/backlog <repo> <n°>`
+(traiter l'item **dans la session courante**, en dialoguant) ou `/backlog <repo> <n°> cloud`
+(l'envoyer en issue). FleetView et `/backlog` lisent les **mêmes `BACKLOG.md`** : une seule
+liste, deux surfaces.
 
 > 💰 **Sur une issue directe : 1 commentaire = 1 lot.** Chaque réponse `@claude` relance une
 > **session Actions complète** (re-clone du repo + relecture de tout le fil), payée à chaque
