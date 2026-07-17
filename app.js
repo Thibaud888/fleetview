@@ -312,7 +312,9 @@ function buildModel(fleet, D){
       const idleH = (Date.now()-new Date(lastActivity))/3.6e6;
 
       if(linkedPR){
-        // la PR parle pour elle (traitée plus bas)
+        // la PR parle pour elle (état et lignes traités plus bas) — mais le fil reste
+        // visible : l'issue est encore ouverte, on peut vouloir y répondre.
+        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
       } else if(claudeRunning){
         bump("info");
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session Actions en cours`, small:timeAgo(is.updated_at), act:{id:"gh-issue", n:is.number, label:"Suivre"}});
@@ -505,6 +507,10 @@ function renderSummary(){
 }
 function renderAttention(){
   const a=model.attention;
+  // Badge de l'onglet Atelier (mobile) : depuis Codex/Chroniques/Tâches, rien ne signalait
+  // qu'une action attend — la pastille donne le compte, un tap sur l'onglet y mène.
+  const bb=$("#bb-attn");
+  if(bb){ bb.hidden=!a.length; bb.textContent=a.length; }
   $("#attn").hidden=!a.length;
   $("#attn-title").innerHTML=`<span class="orn">❧</span>À traiter · ${a.length}`;
   $("#attn-rows").innerHTML=a.map(x=>`
@@ -759,6 +765,10 @@ function renderDetail(){
   const draft = renderDetail._repo===r.id ? {
     // Un brouillon par fil (textarea id="thread-reply-<n°>") : plusieurs dialogues peuvent coexister.
     threads: Object.fromEntries([...document.querySelectorAll('textarea[id^="thread-reply-"]')].map(t=>[t.id, t.value])),
+    // Position de lecture par fil : sans elle, le relevé auto ramenait chaque dialogue en haut.
+    scrolls: Object.fromEntries([...document.querySelectorAll('.thread-block')].map(b=>{
+      const t=b.querySelector('.thread'); return [b.dataset.thread, t?t.scrollTop:0];
+    })),
     pr: ($("#pr-reply-text")||{}).value||"",
     prOpen: !!($("#pr-reply") && !$("#pr-reply").hidden),
     focusId: document.activeElement ? document.activeElement.id : "",
@@ -891,6 +901,10 @@ function renderDetail(){
     for(const [tid,v] of Object.entries(draft.threads||{})){
       const el=document.getElementById(tid); if(el && v) el.value=v;
     }
+    for(const [num,top] of Object.entries(draft.scrolls||{})){
+      const t=document.querySelector(`.thread-block[data-thread="${num}"] .thread`);
+      if(t && top) t.scrollTop=top;
+    }
     const pt=$("#pr-reply-text"); if(pt && draft.pr) pt.value=draft.pr;
     if(draft.prOpen && $("#pr-reply")) $("#pr-reply").hidden=false;
     if(draft.focusId.startsWith("thread-reply-")||draft.focusId==="pr-reply-text"){
@@ -982,6 +996,10 @@ async function saveIdea(num){
   const repo=$("#ie-repo").value, prio=$("#ie-prio").value, cat=$("#ie-cat").value;
   await ensureLabel(META,prio,PRIO_LABEL_COLOR[prio],"Priorité codex");
   const labels=["idée",prio];
+  // Le PATCH remplace TOUS les labels : préserver « à-préciser » (état ⏳ posé par le
+  // cadrage), sinon éditer une idée en attente effaçait silencieusement son état.
+  const cur=model&&model.ideas.find(i=>i.num===num);
+  if(cur&&cur.waiting) labels.push("à-préciser");
   if(cat){ labels.push("cat:"+cat); await ensureLabel(META,"cat:"+cat,IDEA_CATS[cat].color,"Catégorie codex : "+IDEA_CATS[cat].l); }
   const body=`**Projet** : ${repo}\n\n${desc||""}\n\n_Créée depuis FleetView._`;
   await gh(`/repos/${OWNER}/${META}/issues/${num}`,{method:"PATCH",body:{title,body,labels}});
@@ -1093,6 +1111,9 @@ async function loadTasks(force){
   try{
     if(demo){ tasks=demoTasks(); tasksAt=new Date(); return; }
     const fleet=(fleetFile&&fleetFile.json&&fleetFile.json.repos)||[];
+    // Registre pas encore chargé (premier relevé en cours ou en échec) : ne pas afficher
+    // « tous les backlogs au propre » à tort — on garde l'accueil et on le dit.
+    if(!fleet.length){ toast("Le registre n'est pas encore chargé — attends la fin du relevé puis ⟳ Lire."); return; }
     const actifs=fleet.filter(r=>String(r.statut||"").toLowerCase()==="actif"||!r.statut);
     const out=[];
     await Promise.all(actifs.map(async fr=>{
@@ -1268,9 +1289,12 @@ async function runPush(){
   const seen=loadNotified(); let changed=false;
   for(const ev of model.notify){
     if(seen.has(ev.key)) continue;
-    seen.add(ev.key); changed=true;
-    if(wantNative) nativeNotify(ev);
-    if(url){ try{ await publishNtfy(url, ev); }catch(e){ /* réseau : on ne bloque pas le relevé */ } }
+    // Marquer « vu » seulement si AU MOINS un canal a livré : sinon un échec réseau ntfy
+    // avalait la notification pour toujours — là, on retente au prochain relevé.
+    let delivered=false;
+    if(wantNative){ try{ delivered=await nativeNotify(ev); }catch(e){} }
+    if(url){ try{ await publishNtfy(url, ev); delivered=true; }catch(e){ /* réseau : on ne bloque pas le relevé */ } }
+    if(delivered){ seen.add(ev.key); changed=true; }
   }
   if(changed) saveNotified(seen);
 }
@@ -1349,13 +1373,18 @@ function showConfig(show){
   $("#btn-new").hidden=show;
   $("#btn-newidea").hidden=show;
   $("#btn-newproject").hidden=show;
+  // « Changer le token… » ouvert par curiosité : proposer un retour (sinon il fallait
+  // recharger la page). Visible seulement si l'app a de quoi s'afficher derrière.
+  const back=$("#config-back-row");
+  if(back) back.hidden=!(show && model && store.token);
 }
 
 /* ================= Modales ================= */
 const modal=$("#modal"), modalProjet=$("#modal-projet");
 function openModal(opts){
   opts=opts||{};
-  if(!model) return;
+  // Avant le premier relevé, la liste des projets n'existe pas : le dire plutôt que rien.
+  if(!model){ toast("Le premier relevé n'est pas terminé — réessaie dans un instant."); return; }
   const sel=$("#f-repo");
   sel.innerHTML=`<option value="flotte">flotte (claude-ops)</option>`+
     model.repos.filter(r=>r.life!=="archive").map(r=>`<option value="${esc(r.id)}"${r.id===opts.repo?" selected":""}>${esc(r.id)} — ${esc(r.type)}</option>`).join("");
@@ -1402,9 +1431,13 @@ document.addEventListener("click",async(e)=>{
   if(b){
     if(b.dataset.filter!==undefined){ ui.filter=b.dataset.filter; renderFilters(); renderGrid(); return; }
     if(b.dataset.tab!==undefined){
+      const same=document.body.dataset.tab===b.dataset.tab;
       document.body.dataset.tab=b.dataset.tab;
       document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
       if(b.dataset.tab!=="flotte"){ ui.openRepo=null; renderDetail(); }
+      // Re-tap sur l'onglet Atelier déjà actif : retour à la grille (ferme la vue projet)
+      // et remonte en haut — le geste standard des barres d'onglets.
+      else if(same){ if(ui.openRepo){ ui.openRepo=null; ui.threadBig=null; renderDetail(); } window.scrollTo({top:0}); }
       if(b.dataset.tab==="taches") loadTasks(); // premier tap = lecture des backlogs
       return;
     }
@@ -1486,6 +1519,20 @@ document.addEventListener("click",async(e)=>{
   if(card&&!b) openDetail(card.dataset.card);
 });
 
+// Ctrl/Cmd+Entrée envoie la réponse en cours (fil de dialogue ou PR) — évite de lâcher
+// le clavier pour attraper le bouton « Envoyer » après une réponse tapée au long.
+document.addEventListener("keydown",(e)=>{
+  if(!(e.ctrlKey||e.metaKey) || e.key!=="Enter") return;
+  const t=e.target;
+  if(t.id && t.id.startsWith("thread-reply-")){
+    const btn=document.querySelector(`[data-act="thread-send"][data-n="${t.id.slice("thread-reply-".length)}"]`);
+    if(btn){ e.preventDefault(); btn.click(); }
+  } else if(t.id==="pr-reply-text"){
+    const btn=document.querySelector('[data-act="pr-comment-send"]');
+    if(btn){ e.preventDefault(); btn.click(); }
+  }
+});
+
 // La modale ne se ferme qu'en cas de SUCCÈS : avant, method="dialog" la fermait dès le
 // submit et un échec API (422, réseau…) emportait tout ce qui avait été saisi.
 $("#form-new").addEventListener("submit",async(e)=>{
@@ -1511,6 +1558,12 @@ $("#form-new").addEventListener("submit",async(e)=>{
   finally{ btn.disabled=false; syncWhen(); }
 });
 document.querySelectorAll('input[name="f-when"]').forEach(x=>x.addEventListener("change",syncWhen));
+// Échap / geste retour Android fermait la modale en emportant la saisie (dictée comprise) :
+// on demande confirmation quand des champs sont remplis. Le ✕ reste une fermeture directe.
+modal.addEventListener("cancel",(e)=>{
+  if(($("#f-title").value.trim()||$("#f-desc").value.trim()) &&
+     !confirm("Fermer et perdre la saisie en cours ?")) e.preventDefault();
+});
 $("#btn-new").addEventListener("click",()=>openModal());
 // « Idée » (topbar + panneau codex) : même modale, parcours « Codex » présélectionné.
 document.querySelectorAll(".act-newidea").forEach(b=>b.addEventListener("click",()=>openModal({parcours:"box"})));
@@ -1518,6 +1571,9 @@ $("#modal-close").addEventListener("click",()=>modal.close());
 $("#btn-newproject").addEventListener("click",()=>modalProjet.showModal());
 $("#link-newproject").addEventListener("click",(e)=>{e.preventDefault();modal.close();modalProjet.showModal();});
 $("#modal-projet-close").addEventListener("click",()=>modalProjet.close());
+modalProjet.addEventListener("cancel",(e)=>{
+  if($("#p-name").value.trim() && !confirm("Fermer et perdre la saisie en cours ?")) e.preventDefault();
+});
 $("#form-projet").addEventListener("submit",async(e)=>{
   e.preventDefault(); // même principe : fermeture au succès seulement
   const name=$("#p-name").value.trim();
@@ -1696,6 +1752,7 @@ $("#btn-change-token").addEventListener("click",()=>{
   $("#token-input").value="";
   showConfig(true); // l'ancien token reste actif tant qu'un nouveau n'est pas relié
 });
+$("#config-back").addEventListener("click",(e)=>{ e.preventDefault(); showConfig(false); });
 
 /* ================= Thème ================= */
 const themeSel=$("#theme-select");
