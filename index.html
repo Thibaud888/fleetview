@@ -9,7 +9,7 @@
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
-  <meta name="theme-color" content="#ECE3CE">
+  <meta name="theme-color" content="#EBE1CB">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
@@ -65,6 +65,7 @@
       <button class="btn btn-primary" id="token-save">Relier</button>
     </div>
     <p class="marginalia">…ou <a href="#" id="demo-link">explorer en mode démo</a> (données factices, aucune action réelle).</p>
+    <p class="marginalia" id="config-back-row" hidden><a href="#" id="config-back">← Revenir à l'atelier</a> sans changer de token.</p>
   </div>
 </section>
 
@@ -117,7 +118,7 @@
 </div>
 
 <nav class="bottombar" aria-label="Sections" id="bottombar" hidden>
-  <button class="bb-btn" data-tab="flotte" aria-pressed="true">Atelier</button>
+  <button class="bb-btn" data-tab="flotte" aria-pressed="true">Atelier<span class="bb-badge num" id="bb-attn" hidden></span></button>
   <button class="bb-btn" data-tab="taches" aria-pressed="false">Tâches</button>
   <button class="bb-btn" data-tab="idees" aria-pressed="false">Codex</button>
   <button class="bb-btn" data-tab="activite" aria-pressed="false">Chroniques</button>

@@ -467,7 +467,11 @@ dialog::backdrop{background:color-mix(in srgb, var(--ink) 45%, transparent); bac
   .layout{display:block; padding:16px 15px 20px}
   .col-side{margin-top:20px; gap:16px}
   .topbar-in{padding:10px 15px; gap:9px}
-  .brand-sub,.refresh-note{display:none}
+  .brand-sub,#rate-note{display:none}
+  /* L'heure du dernier relevé reste lisible sur mobile : glissée dans la marge basse
+     de la topbar (position absolue → quasi aucun coût en hauteur d'écran) */
+  .topbar-in{position:relative; padding-bottom:16px}
+  #sync-note{position:absolute; right:15px; bottom:3px; font-size:10px; line-height:1}
   .btn-secondary-desktop{display:none}
   .detail{padding:16px}
   .msg .who{width:46px}
@@ -477,9 +481,13 @@ dialog::backdrop{background:color-mix(in srgb, var(--ink) 45%, transparent); bac
     border-top:var(--double); padding:7px 10px calc(7px + env(safe-area-inset-bottom,0px));
     justify-content:space-around; align-items:center;
   }
-  .bb-btn{background:none; border:none; padding:5px 12px; border-radius:var(--r-sm); font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.06em; font-weight:600; font-size:12px; color:var(--mut); display:flex; flex-direction:column; align-items:center; gap:1px}
+  .bb-btn{background:none; border:none; padding:5px 12px; border-radius:var(--r-sm); font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.06em; font-weight:600; font-size:12px; color:var(--mut); display:flex; flex-direction:column; align-items:center; gap:1px; position:relative}
   .bb-btn[aria-pressed="true"]{color:var(--accent)}
   .bb-btn .n{font-size:10px; font-weight:400}
+  /* Pastille « À traiter » sur l'onglet Atelier : visible depuis tous les onglets */
+  .bb-badge{position:absolute; top:-2px; right:-3px; min-width:16px; height:16px; padding:0 4px;
+    border-radius:99px; background:var(--crit); color:#fff; font-size:10px; line-height:16px;
+    font-weight:600; text-align:center; letter-spacing:0}
   body[data-tab="flotte"] #panel-idees, body[data-tab="flotte"] #panel-activite{display:none}
   body[data-tab="flotte"] #zone-taches{display:none} /* sur mobile, les tâches ont leur onglet */
   body[data-tab="taches"] #view-fleet, body[data-tab="taches"] #view-detail,
