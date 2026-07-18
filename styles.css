@@ -330,6 +330,36 @@ body.thread-full-open{overflow:hidden}
 .detail-actions{display:flex; gap:9px; flex-wrap:wrap; margin-top:18px; padding-top:14px; border-top:1px solid var(--line)}
 .detail-actions .ghlink{margin-left:auto; font-family:var(--font-mono); font-size:11.5px; align-self:center}
 
+/* « Que faire ? » — la boîte qui répond à LA question en ouvrant un projet */
+.next-box{border:1px solid color-mix(in srgb, var(--accent) 30%, var(--line-strong)); border-radius:var(--r);
+  background:color-mix(in srgb, var(--accent) 5%, var(--surface-2)); padding:12px 15px; margin:0 0 15px}
+.next-box .eyebrow{margin-bottom:7px}
+.next-box.calm{border-style:dashed; border-color:var(--line-strong); background:var(--surface-2)}
+.next-row{display:flex; align-items:center; gap:10px; padding:7px 0; border-top:1px solid var(--line)}
+.next-row:first-of-type{border-top:none}
+.next-row .txt{flex:1; font-family:var(--font-sans); font-size:14px; line-height:1.4}
+.next-none{margin:0; font-size:13px}
+
+/* Statut d'un fil de dialogue + réponses en un clic */
+.thread-hint{margin:-3px 0 10px; font-family:var(--font-sans); font-size:13px; color:var(--ink-soft); line-height:1.45}
+.quick-replies{display:flex; flex-wrap:wrap; gap:8px; margin-top:11px}
+.quick-replies .qr{font-size:12.5px; padding:6px 11px; text-align:left; line-height:1.3; flex:0 1 auto; min-width:0}
+
+/* Codex : question du cadrage à répondre sur place.
+   `.idea.idea-ask` (et pas `.idea-ask` seul) : la règle `.idea{display:flex}` arrive plus
+   loin dans la feuille et gagnerait sinon — la carte partirait en colonnes. */
+.idea.idea-ask{display:block; background:color-mix(in srgb, var(--warn) 6%, var(--surface)); border-left:3px solid var(--warn)}
+.idea-ask-head{display:flex; align-items:flex-start; gap:10px}
+.idea-ask-head .ghlink{font-family:var(--font-mono); font-size:11px; flex:none; margin-top:2px}
+.idea-question{margin:9px 0 0 0; padding:9px 11px; border:1px solid var(--line); border-radius:var(--r-sm);
+  background:var(--surface-2); font-size:13px; color:var(--ink-soft)}
+.idea-ask .reply{margin-top:9px}
+.idea-ask .reply textarea{min-height:38px; font-size:13px}
+.idea-spin{flex:none; opacity:.55; font-size:13px; padding:4px 2px}
+.ask-head{color:var(--warn)}
+@keyframes fv-flash{0%{background:color-mix(in srgb, var(--accent) 22%, transparent)} 100%{background:transparent}}
+.idea.flash{animation:fv-flash 1.6s var(--ease)}
+
 /* Secret Claude manquant (bootstrap sans terminal) — visible seulement si absent */
 .kit-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 14px; padding:9px 12px;
   border:1px dashed color-mix(in srgb, var(--crit) 45%, var(--line-strong)); border-radius:var(--r-sm);
@@ -475,6 +505,9 @@ dialog::backdrop{background:color-mix(in srgb, var(--ink) 45%, transparent); bac
   .btn-secondary-desktop{display:none}
   .detail{padding:16px}
   .msg .who{width:46px}
+  /* Les options de réponse en pleine largeur : une liste de choix tapables, pas des
+     boutons compressés à 100 px où le texte se noie. */
+  .quick-replies .qr{flex:1 1 100%}
   .bottombar{
     display:flex; position:fixed; left:0; right:0; bottom:0; z-index:30;
     background:color-mix(in srgb, var(--surface) 95%, transparent); backdrop-filter:blur(10px);

@@ -1,0 +1,29 @@
+# Veilleur de la flotte — notifications ntfy même quand FleetView est fermé.
+# Repo public → minutes Actions gratuites : le cron toutes les 15 min ne coûte rien.
+# Inactif (sortie 0 immédiate) tant que les secrets FLEET_GH_TOKEN et NTFY_TOPIC ne sont
+# pas posés sur CE repo — voir docs/GUIDE.md §7 pour l'activer en 2 minutes.
+name: Veilleur (notifications)
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  veille:
+    # Garde anti-fork : le cron ne doit tourner que sur le repo d'origine.
+    if: github.repository == 'Thibaud888/fleetview'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Veille (fenêtre 20 min)
+        env:
+          FLEET_GH_TOKEN: ${{ secrets.FLEET_GH_TOKEN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: node scripts/veilleur.mjs

@@ -32,8 +32,12 @@ scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après
 | Nouveau thème | `styles.css` | Ajouter `html[data-fv-theme="nom"]` + vars CSS |
 | Modifier l'API GitHub | `app.js:gh()` | Fonction wrapper (headers, retry, erreurs, quota) |
 | Notifications ntfy | `app.js:publishNtfy()` + index.html settings | Sujet localStorage, handlers cliquables, testable |
-| Lanceur session cloud | `app.js:composeCloudPrompt()`/`launchCloud()` | Compose un prompt de cadrage, le copie, ouvre claude.ai/code (interactif) |
-| Issue directe (Actions) | `app.js:createRequest()`/`directBody()` | Crée l'issue `claude` (fire-and-forget), déclencheur `@claude` du kit |
+| Lanceur session cloud | `app.js:composeCloudPrompt()`/`launchCloud()` | Compose un prompt (spec d'abord ; contexte du repo si pas de tâche), le copie, ouvre claude.ai/code |
+| Issue directe (Actions) | `app.js:createRequest()`/`directBody()` | Crée l'issue `claude` (fire-and-forget), déclencheur `@claude` du kit ; le corps impose la convention question→Options |
+| Questions à options (boutons) | `app.js:parseOptions()` + handlers `data-qr`/`data-iqr` | Convention `**Options :**`+`**Recommandation :** option N` → boutons de réponse en un clic |
+| « Que faire ? » / statuts de fil | `app.js:buildModel()` (tableaux `next`, `status` par fil) | La boîte en tête de vue projet + l'en-tête de chaque Dialogue |
+| Codex : question du cadrage | `app.js:renderIdeas()` (groupes ask/busy) + `sendIdeaReply()` | Question affichée sur place, réponse SANS @claude (relance auto côté claude-ops) |
+| Veilleur (notifs app fermée) | `scripts/veilleur.mjs` + `.github/workflows/veilleur.yml` | Cron 15 min, sans état (fenêtre 20 min), secrets `FLEET_GH_TOKEN`+`NTFY_TOPIC` |
 | Journal de run | `app.js:renderJournalInto()` + `styles.css .log` | Actualisation ~4,5s pendant run, lien vers logs bruts |
 | Changer l'icône | `icon.svg` puis `node scripts/icons.mjs` | Édite SVG, régénère PNG (192, 512, maskable, apple) |
 
@@ -60,7 +64,9 @@ node scripts/verify.mjs          # Test : serveur HTTP natif, vérifie réponse
 - **Labels dynamiques** : `ensureLabel()` crée labels à la volée (`claude`, `idée`, `P1-P3`, etc.) — ne pas supposer leur existence.
 - **Deux canaux de lancement** : session **cloud** (interactif, claude.ai/code — prompt composé, copié, ouvert ; pas d'API pour pré-remplir, geste copier→coller) et **issue directe** (fire-and-forget, session Actions → PR). Le protocole cadrage 2 phases (label `cadrage`, « GO ») a été retiré — ne pas le réintroduire.
 - **fleet.json dual-write** : aussi écrit par `scripts/fleet.mjs` (claude-ops) — modifier UNIQuement `statut`, préserver reste, gérer conflit `sha` (re-fetch avant PUT).
-- **Notifications ntfy** : sujet localStorage, jamais commité. Handlers cliquables passent `?repo=<id>` et scrollent vers le bon projet. Test via bouton Tester.
+- **Notifications ntfy** : sujet localStorage, jamais commité. Handlers cliquables passent `?repo=<id>` (ou `?idea=<n>`) et ouvrent le bon endroit. Test via bouton Tester. App fermée = rôle du **veilleur** (cron `veilleur.yml`, inactif sans ses 2 secrets).
+- **Réponse à une idée du codex : JAMAIS de préfixe `@claude`** (ça déclencherait `claude.yml` sur claude-ops) — `sendIdeaReply()` poste un commentaire nu ; la relance du cadrage est automatique (déclencheur `issue_comment` de `codex-cadrage.yml` côté claude-ops).
+- **Convention « question à options »** partagée avec claude-ops : bloc `**Options :**` + `**Recommandation :** option N` — `parseOptions()` la lit ; si tu changes le format, change les DEUX côtés (codex-cadrage.yml et `directBody()`).
 - **Journal de run** : actualise ~4,5s tant que `run.status !== 'completed'`. Logs bruts indisponibles côté client (CORS) → lien vers GitHub Actions.
 - **Quota API** : lu depuis en-têtes x-ratelimit-*, alerte toast < 500 req. Service worker ne cache pas l'API.
 - **Service worker** : cache la coquille (HTML/CSS/JS/icônes) ; JAMAIS l'API GitHub (cross-origin, réseau direct). Coupure réseau = app hors-ligne mais fonctionnelle.

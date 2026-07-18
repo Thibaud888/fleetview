@@ -103,7 +103,7 @@
     <section class="panel" id="panel-idees">
       <div class="panel-head">
         <h2 class="eyebrow"><span class="orn">❧</span>Codex des idées · <span id="ideas-count" class="num"></span></h2>
-        <span class="marginalia" style="font-size:12px">cadrées chaque matin → backlog</span>
+        <span class="marginalia" style="font-size:12px">🪶 envoie l'idée au backlog — réponds ici s'il questionne</span>
       </div>
       <div id="ideas"></div>
       <div class="codex-add">
@@ -156,11 +156,11 @@
         <label>Parcours</label>
         <div class="radio-row">
           <label class="radio-card"><input type="radio" name="f-when" value="cloud" checked>
-            <span><b>🌩 Session cloud</b><small>conversation interactive sur claude.ai/code — cadrer puis implémenter ensemble, suivable sur mobile ; recommandé</small></span></label>
+            <span><b>🌩 Session cloud</b><small>tu discutes avec Claude (claude.ai/code) : il précise la tâche avec toi, puis code — le bon choix par défaut</small></span></label>
           <label class="radio-card"><input type="radio" name="f-when" value="direct">
-            <span><b>⚡ Issue directe</b><small>fire-and-forget : l'issue part telle quelle, session Actions → PR — pour les demandes déjà limpides</small></span></label>
+            <span><b>⚡ Issue directe</b><small>Claude part tout seul et revient avec une PR à valider — pour les demandes déjà claires, sans échange</small></span></label>
           <label class="radio-card" id="opt-box"><input type="radio" name="f-when" value="box">
-            <span><b>💡 Codex</b><small>rangée dans la boîte ; cadrée et promue au backlog chaque matin, ou tout de suite d'un 🪶</small></span></label>
+            <span><b>💡 Codex</b><small>juste noter l'idée — rien ne se lance ; le 🪶 du codex l'enverra au backlog quand tu voudras</small></span></label>
         </div>
       </div>
       <div class="field prio-row" id="f-prio-row">
@@ -182,13 +182,13 @@
         <label>Modèle d'implémentation</label>
         <div class="radio-row">
           <label class="radio-card"><input type="radio" name="f-model" value="sonnet" checked>
-            <span><b>Sonnet</b><small>code courant — label <code>claude</code></small></span></label>
+            <span><b>Sonnet</b><small>le bon défaut — code courant, bon rapport vitesse/qualité</small></span></label>
           <label class="radio-card"><input type="radio" name="f-model" value="haiku">
-            <span><b>Haiku</b><small>tâche mécanique — <code>claude:haiku</code></small></span></label>
+            <span><b>Haiku</b><small>rapide et léger — retouches simples et répétitives</small></span></label>
           <label class="radio-card"><input type="radio" name="f-model" value="opus">
-            <span><b>Opus</b><small>conception, gros chantier — <code>claude:opus</code></small></span></label>
+            <span><b>Opus</b><small>puissant, plus lent — conception, gros chantiers</small></span></label>
           <label class="radio-card"><input type="radio" name="f-model" value="fable">
-            <span><b>Fable</b><small>le plus capable — <code>claude:fable</code> · possiblement retiré sous peu</small></span></label>
+            <span><b>Fable</b><small>le plus capable — à réserver à l'exceptionnel · possiblement retiré sous peu</small></span></label>
         </div>
       </div>
     </div>
@@ -264,9 +264,9 @@
         <span class="marginalia" id="notif-status" style="font-size:12.5px; align-self:center"></span>
       </div>
       <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
-        FleetView notifie <b>directement</b> ton appareil — aucun service tiers. Uniquement quand Claude te pose
-        une question ou qu'une PR est prête ; le clic ouvre le bon projet. La détection tourne tant que
-        FleetView est ouvert (même en arrière-plan).
+        FleetView notifie <b>directement</b> ton appareil quand une action t'attend (question de Claude,
+        PR prête, question du cadrage) ; le clic ouvre le bon endroit. Marche tant que FleetView est
+        <b>ouvert</b> (même en arrière-plan). App fermée → c'est le <b>veilleur</b> qui prend le relais (ci-dessous).
       </p>
     </div>
     <div class="field">
@@ -278,8 +278,10 @@
         <button type="button" class="btn" id="ntfy-clear">Désactiver</button>
       </div>
       <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
-        Mêmes règles que ci-dessus, mais livré via l'app <b>ntfy</b> (abonne-toi au même sujet secret dans l'app).
-        L'URL reste dans ce navigateur.
+        Livré via l'app <b>ntfy</b> (abonne-toi au même sujet secret dans l'app). L'URL reste dans ce navigateur.
+        💡 Pour être notifié même <b>app fermée</b>, active le <b>veilleur de la flotte</b> : un cron du repo
+        fleetview qui surveille et pousse sur ntfy toutes les 15 min (guide §7). S'il est actif, laisse ce
+        champ-ci vide — sinon tu recevras tout en double.
       </p>
     </div>
     <div class="field">
