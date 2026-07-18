@@ -130,6 +130,48 @@ function timeUntil(ms){
   if(d<3600) return `dans ${Math.round(d/60)} min`;
   return `dans ${Math.round(d/3600)} h`;
 }
+// Parse la convention « question à options » (cadrage codex & sessions issues) :
+// un bloc `**Options :**` suivi de lignes numérotées `1. …`, et une ligne
+// `**Recommandation :** option N`. Repli prudent : un commentaire qui pose une
+// question (ligne finissant par « ? ») et enchaîne une courte liste numérotée.
+// Retourne {opts:[{n,t}], rec:N|null} ou null si rien d'exploitable.
+function parseOptions(body){
+  const s=String(body||"");
+  const m=s.match(/\*\*Options\s*:?\s*\*\*\s*\n([\s\S]*)/i);
+  let lines;
+  if(m) lines=m[1].split(/\n/);
+  else if(/\?\s*$/m.test(s)){
+    // Repli : seule la liste qui SUIT la dernière question compte — une liste d'étapes
+    // en début de commentaire ne doit pas devenir des boutons de réponse absurdes.
+    const all=s.split(/\n/);
+    let lastQ=-1; all.forEach((l,i)=>{ if(/\?\s*$/.test(l.trim())) lastQ=i; });
+    lines=all.slice(lastQ+1);
+  }
+  else return null;
+  const opts=[];
+  for(const l of lines){
+    const mm=l.trim().match(/^([1-6])[.)]\s+(.{3,140})$/);
+    if(mm) opts.push({n:Number(mm[1]), t:mm[2].trim()});
+    else if(opts.length) break; // fin de la liste contiguë
+  }
+  if(opts.length<2 || opts.length>4) return null;
+  const rm=s.match(/recommandation\s*:?\**\s*option\s*([1-6])/i) || s.match(/je\s+recommande\s+l['’]option\s*([1-6])/i);
+  return {opts, rec:rm?Number(rm[1]):null};
+}
+// Libellé court d'une option pour un bouton (sans balisage markdown).
+function optLabel(t){ const s=String(t).replace(/\*\*|`/g,""); return s.length>64?s.slice(0,62)+"…":s; }
+
+// Suivi local du cadrage (🪶 lancé, réponse envoyée) : purement cosmétique — fait
+// patienter l'interface entre le geste et le prochain relevé. Borné, jamais synchronisé.
+function cadrageMarks(){ try{ return JSON.parse(localStorage.getItem("fv-cadrage")||"{}"); }catch(e){ return {}; } }
+function markCadrage(num, kind){
+  const m=cadrageMarks(); m[num]={...(m[num]||{}), [kind]:Date.now()};
+  const keys=Object.keys(m);
+  if(keys.length>24) for(const k of keys.slice(0, keys.length-24)) delete m[k];
+  try{ localStorage.setItem("fv-cadrage", JSON.stringify(m)); }catch(e){}
+}
+const CADRAGE_RUN_MS=15*60e3, CADRAGE_SENT_MS=30*60e3;
+
 let toastTimer=null;
 function toast(msg, ms){
   const t=$("#toast"); t.textContent=msg; t.classList.add("on");
@@ -277,7 +319,15 @@ async function loadAll(){
     catch(e){}
   }));
 
-  model = buildModel(fleet, {claudeIssues, openPRs, ideasRaw:ideasRes, runsByRepo, prDetails, commentsByIssue});
+  // 6. Question du cadrage pour les idées « ⏳ à préciser » : leur fil est court et
+  // il faut pouvoir AFFICHER la question (et y répondre) sans détour par GitHub.
+  const ideaComments = {};
+  await Promise.all((ideasRes||[]).filter(i=>!i.pull_request && (i.labels||[]).some(l=>l.name==="à-préciser")).map(async i=>{
+    try{ ideaComments[i.number] = await gh(`/repos/${OWNER}/${META}/issues/${i.number}/comments?per_page=100`); }
+    catch(e){}
+  }));
+
+  model = buildModel(fleet, {claudeIssues, openPRs, ideasRaw:ideasRes, runsByRepo, prDetails, commentsByIssue, ideaComments});
   ui.lastSync = new Date();
   store.snapshot = { at: ui.lastSync.toISOString(), model }; // conserve le relevé pour le hors-ligne
 }
@@ -292,6 +342,9 @@ function buildModel(fleet, D){
     const id=fr.repo;
     const life = isArchived(fr.statut)?"archive":(isVeille(fr.statut)?"veille":"actif");
     const lines=[]; let state="calm"; let lastTs=null; let pr=null; const threadIssues=[];
+    // next = « Que faire ? » : les actions qui attendent TOI, en français clair, avec le
+    // bouton qui va bien — c'est la boîte affichée en tête de la vue projet.
+    const next=[];
     const bump=(s)=>{ if(STATES[s].order<STATES[state].order) state=s; };
     const seen=(iso)=>{ if(iso && (!lastTs||iso>lastTs)) lastTs=iso; };
     const runs = D.runsByRepo[id]||[];
@@ -311,35 +364,52 @@ function buildModel(fleet, D){
       const lastActivity = lastC ? lastC.created_at : is.created_at;
       const idleH = (Date.now()-new Date(lastActivity))/3.6e6;
 
+      // Chaque fil reçoit un statut en clair : phase + « quoi faire » — c'est lui qui
+      // pilote l'en-tête du bloc Dialogue et la boîte « Que faire ? » de la vue projet.
+      // `claudeRunning` est un signal PAR REPO (pas par issue) : si le dernier commentaire
+      // de CE fil est une question de Claude, elle prime — sinon la session en cours d'une
+      // AUTRE issue masquerait la question et son entrée « À traiter ».
+      const lastFromClaude = lastC && lastC.user && lastC.user.login!==OWNER;
+      const asksQuestion = lastFromClaude && (!!parseOptions(lastC.body) || /\?\s*$/m.test(lastC.body||""));
+      let status;
       if(linkedPR){
-        // la PR parle pour elle (état et lignes traités plus bas) — mais le fil reste
+        // La PR parle pour elle (état et lignes traités plus bas) — mais le fil reste
         // visible : l'issue est encore ouverte, on peut vouloir y répondre.
-        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
-      } else if(claudeRunning){
+        status={phase:"pr", c:"warn", label:"PR ouverte",
+          hint:`La session a ouvert la PR #${linkedPR.number} — la décision se prend dans le bloc Pull request.`};
+      } else if(claudeRunning && !asksQuestion){
         bump("info");
-        lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session Actions en cours`, small:timeAgo(is.updated_at), act:{id:"gh-issue", n:is.number, label:"Suivre"}});
-        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
-      } else if(lastC && lastC.user.login!==OWNER){
+        status={phase:"session", c:"info", label:"session en cours",
+          hint:"Claude travaille — rien à faire pour l'instant, le journal du run défile plus bas."};
+        lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session en cours`, small:timeAgo(is.updated_at), act:{id:"gh-issue", n:is.number, label:"Suivre"}});
+      } else if(lastFromClaude){
         bump("warn");
-        lines.push({c:"warn", t:`Issue #${is.number} « ${is.title} » — réponse de Claude à lire`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
-        attention.push({c:"warn", repo:id, t:`Claude attend ta réponse sur « ${is.title} »`, small:timeAgo(lastC.created_at)});
+        status={phase:"question", c:"warn", label:"à toi de répondre",
+          hint:"Claude te pose une question et attend ta réponse pour continuer — choisis une option ou réponds librement."};
+        lines.push({c:"warn", t:`Issue #${is.number} « ${is.title} » — Claude attend ta réponse`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
+        attention.push({c:"warn", repo:id, t:`Claude te pose une question sur « ${is.title} »`, small:timeAgo(lastC.created_at), verb:"Répondre"});
+        next.push({c:"warn", t:`Réponds à Claude sur « ${is.title} » — la session est en pause en attendant`, act:{id:"open-thread", n:is.number, label:"Répondre ↓"}});
         notify.push({key:`q:${id}#${is.number}:${lastC.id||lastC.created_at}`, kind:"q",
           title:`${id} — Claude attend ta réponse`, msg:is.title, repo:id, tag:"speech_balloon", prio:4});
-        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
       } else if(idleH>2){
         bump("crit");
-        lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — sans nouvelles depuis ${Math.round(idleH)} h (session en échec ?)`, act:{id:"relabel", n:is.number, label:"Relancer"}});
-        attention.push({c:"crit", repo:id, t:`« ${is.title} » : sans nouvelles depuis ${Math.round(idleH)} h`});
-        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
+        status={phase:"silence", c:"crit", label:"session muette",
+          hint:`Plus de nouvelles depuis ${Math.round(idleH)} h — la session a sans doute planté. Relance-la, ça repart de zéro sur cette issue.`};
+        lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — muette depuis ${Math.round(idleH)} h`, act:{id:"relabel", n:is.number, label:"Relancer"}});
+        attention.push({c:"crit", repo:id, t:`La session sur « ${is.title} » est muette depuis ${Math.round(idleH)} h`, verb:"Voir"});
+        next.push({c:"crit", t:`La session sur « ${is.title} » est muette depuis ${Math.round(idleH)} h — sans doute plantée`, act:{id:"relabel", n:is.number, label:"Relancer la session"}});
       } else if(lastC){
         bump("info");
+        status={phase:"repondu", c:"info", label:"réponse envoyée",
+          hint:"Ta réponse est partie — la session reprend d'elle-même (compte ~1 min avant le prochain signe de vie)."};
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — réponse envoyée, la session reprend`, small:timeAgo(lastC.created_at)});
-        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
       } else {
         bump("info");
+        status={phase:"lancement", c:"info", label:"démarrage",
+          hint:"La session démarre — premier signe de vie d'ici quelques minutes."};
         lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session en attente de démarrage`, small:timeAgo(is.created_at)});
-        threadIssues.push({num:is.number, title:is.title, comments, body:is.body});
       }
+      threadIssues.push({num:is.number, title:is.title, comments, body:is.body, status});
       feed.push({ts:is.created_at, c:"info", repo:id, txt:`Issue #${is.number} « ${is.title} » ouverte.`});
     }
 
@@ -352,14 +422,16 @@ function buildModel(fleet, D){
       if(ch && ch.bad){
         bump("crit");
         lines.push({c:"crit", t:`PR #${p.number} « ${p.title} » — ${chTxt}`, act:{id:"open-pr", n:p.number, label:"Examiner"}});
-        attention.push({c:"crit", repo:id, t:`PR #${p.number} « ${p.title} » : ${chTxt}`});
+        attention.push({c:"crit", repo:id, t:`Les tests de la PR #${p.number} « ${p.title} » échouent`, verb:"Voir"});
+        next.push({c:"crit", t:`Les tests de la PR #${p.number} « ${p.title} » échouent — demande la correction ou regarde les logs`, act:{id:"open-pr", n:p.number, label:"Examiner ↓"}});
       } else if(ch && ch.pending){
         bump("info");
         lines.push({c:"info", t:`PR #${p.number} « ${p.title} » — ${chTxt}`, small:timeAgo(p.updated_at)});
       } else {
         bump("warn");
         lines.push({c:"warn", t:`PR #${p.number} « ${p.title} » — ${chTxt}, attend ta décision`, small:timeAgo(p.created_at), act:{id:"open-pr", n:p.number, label:"Examiner"}});
-        attention.push({c:"warn", repo:id, t:`PR #${p.number} « ${p.title} » attend ta décision`, small:timeAgo(p.created_at)});
+        attention.push({c:"warn", repo:id, t:`La PR #${p.number} « ${p.title} » est prête (tests verts)`, small:timeAgo(p.created_at), verb:"Décider"});
+        next.push({c:"warn", t:`La PR #${p.number} « ${p.title} » est prête (tests verts) — merger, ou demander des changements`, act:{id:"open-pr", n:p.number, label:"Décider ↓"}});
         notify.push({key:`pr:${id}#${p.number}`, kind:"pr",
           title:`${id} — PR #${p.number} prête à merger`, msg:p.title, repo:id, tag:"white_check_mark", prio:4});
       }
@@ -379,7 +451,8 @@ function buildModel(fleet, D){
         const n = streak===-1?wf.length:streak;
         bump("crit");
         lines.push({c:"crit", t:`${cron} — ${n>1?n+" échecs consécutifs":"en échec"}`, small:timeAgo(last.updated_at), act:{id:"rerun", n:last.id, label:"Relancer"}});
-        attention.push({c:"crit", repo:id, t:`${cron} en échec${n>1?" ×"+n:""}`, small:timeAgo(last.updated_at)});
+        attention.push({c:"crit", repo:id, t:`Le cron ${cron} échoue${n>1?" ×"+n:""}`, small:timeAgo(last.updated_at), verb:"Voir"});
+        next.push({c:"crit", t:`Le cron ${cron} échoue${n>1?` (×${n})`:""} — souvent un incident passager : relance-le d'abord`, act:{id:"rerun", n:last.id, label:"Relancer le cron"}});
         feed.push({ts:last.updated_at, c:"crit", repo:id, txt:`${cron} en échec.`});
       } else if(last.status!=="completed"){
         bump("info");
@@ -403,7 +476,7 @@ function buildModel(fleet, D){
     if(!lines.length) lines.push({c:"ok", t:"Rien en cours"});
     repos.push({
       id, type: fr.type + (fr.kit_version?` · kit ${fr.kit_version}`:""), life, state,
-      lines, last: lastTs?timeAgo(lastTs):"—", lastTs, pr, threadIssues, lastRun,
+      lines, next, last: lastTs?timeAgo(lastTs):"—", lastTs, pr, threadIssues, lastRun,
       notes: fr.notes||"", url:`https://github.com/${OWNER}/${id}`,
     });
   }
@@ -416,10 +489,30 @@ function buildModel(fleet, D){
     const p=names.find(n=>/^P[123]$/.test(n))||"P3";
     const catRaw=(names.find(n=>n.startsWith("cat:"))||"").slice(4);
     const desc=body.replace(/\*\*Projet\*\*\s*:\s*\S+\s*/,"").replace(/_Créée depuis FleetView\.?_\s*$/,"").trim();
+    const waiting=names.includes("à-préciser");
+    // Question posée par le cadrage (dernier commentaire 🪶) + « répondu » si le dernier
+    // mot du fil est à Thibaud — c'est ce qui distingue « à toi de jouer » de « ça avance ».
+    const comments=(D.ideaComments||{})[i.number]||[];
+    const lastC=comments[comments.length-1];
+    const lastQ=[...comments].reverse().find(c=>/^🪶/.test(c.body||""));
+    const answered=!!(lastC && lastC.user && lastC.user.login===OWNER);
     return {num:i.number, p, repo:m?m[1]:"flotte", t:i.title, desc,
-      cat:IDEA_CATS[catRaw]?catRaw:null, waiting:names.includes("à-préciser"),
+      cat:IDEA_CATS[catRaw]?catRaw:null, waiting,
+      question: waiting&&lastQ ? lastQ.body : "", answered,
+      qId: lastQ ? (lastQ.id||lastQ.created_at) : "", qAt: lastQ ? lastQ.created_at : null,
       url:i.html_url, created:i.created_at};
   });
+
+  // Les questions du cadrage sont des actions à toi : elles montent dans « À traiter »
+  // et déclenchent une notification — avant, elles restaient invisibles au fond du codex.
+  for(const idn of ideas){
+    if(idn.waiting && !idn.answered && idn.question){
+      attention.push({c:"warn", repo:"codex", t:`Le cadrage te pose une question sur « ${idn.t} »`,
+        small:idn.qAt?timeAgo(idn.qAt):"", idea:idn.num, verb:"Répondre"});
+      notify.push({key:`cadrage:${idn.num}:${idn.qId}`, kind:"cadrage",
+        title:"codex — le cadrage te pose une question", msg:idn.t, idea:idn.num, tag:"pencil2", prio:4});
+    }
+  }
 
   feed.sort((a,b)=>b.ts<a.ts?-1:1);
   // « À traiter », chroniques et notifications ne concernent que les repos suivis : on écarte
@@ -444,10 +537,12 @@ function demoModel(){
   return {
     repos:[
       {id:"quiz-capitales", type:"cron-node", life:"actif", state:"crit", last:"il y a 40 min", url:"#",
+        next:[{c:"crit", t:"Le cron publish-shorts.yml échoue (×2) — souvent un incident passager : relance-le d'abord", act:{id:"demo", label:"Relancer le cron"}}],
         lines:[L("crit","publish-shorts.yml — 2 échecs consécutifs","il y a 40 min",{id:"demo",label:"Relancer"}), L("ok","retry-reels.yml — OK","cette nuit")]},
       {id:"bulletins-viz", type:"static · kit 1.0.0", life:"actif", state:"warn", last:"il y a 12 min", url:"#",
-        lines:[L("info","Issue #18 « Export PDF » — session Actions en cours","12 min",{id:"open-thread",n:18,label:"Suivre"}),
-               L("warn","Issue #21 « Moyenne pondérée par coefficient » — réponse de Claude à lire","il y a 25 min",{id:"open-thread",n:21,label:"Répondre"})],
+        next:[{c:"warn", t:"Réponds à Claude sur « Moyenne pondérée par coefficient » — la session est en pause en attendant", act:{id:"open-thread", n:21, label:"Répondre ↓"}}],
+        lines:[L("info","Issue #18 « Export PDF » — session en cours","12 min",{id:"open-thread",n:18,label:"Suivre"}),
+               L("warn","Issue #21 « Moyenne pondérée par coefficient » — Claude attend ta réponse","il y a 25 min",{id:"open-thread",n:21,label:"Répondre"})],
         lastRun:{id:1, name:"Export PDF — session #18", wf:"claude.yml", status:"in_progress",
           conclusion:null, running:true, url:"#", started:new Date(Date.now()-4*60000).toISOString()},
         demoJobs:[{name:"claude", status:"in_progress", conclusion:null, steps:[
@@ -458,17 +553,23 @@ function demoModel(){
           {number:5,name:"Vérification (verify.mjs)",status:"queued",conclusion:null},
           {number:6,name:"Ouverture de la PR",status:"queued",conclusion:null}]}],
         threadIssues:[
-          {num:18, title:"Export PDF", body:"Ajouter un bouton pour exporter le bulletin courant en PDF.\n\n_Créée depuis FleetView._", comments:[
+          {num:18, title:"Export PDF", body:"Ajouter un bouton pour exporter le bulletin courant en PDF.\n\n_Créée depuis FleetView._",
+           status:{phase:"session", c:"info", label:"session en cours", hint:"Claude travaille — rien à faire pour l'instant, le journal du run défile plus bas."},
+           comments:[
             {user:{login:OWNER}, body:"Ajouter un bouton pour exporter le bulletin courant en PDF."},
             {user:{login:"claude-bot"}, body:"## Spécification\n\n**Objectif** : bouton « Exporter en PDF » dans la barre du bulletin.\n\n- Rendu client via `window.print` + feuille `@media print` dédiée — aucune dépendance\n- Critères de done :\n- [x] le PDF reprend le graphe et le tableau\n- [ ] sans la navigation\n\nJ'enchaîne l'implémentation."},
             {user:{login:"claude-bot"}, body:"Fait : bouton ajouté, styles d'impression en place, **PR #19 ouverte** (Closes #18).\n\n```bash\nnode scripts/verify.mjs   # VERIFY OK\n```\nVérifié : l'aperçu d'impression montre le bulletin seul."},
           ]},
-          // Second fil sur le même repo : illustre les dialogues empilés (un bloc par issue ouverte).
-          {num:21, title:"Moyenne pondérée par coefficient", body:"Le bulletin devrait pondérer la moyenne par les coefficients des matières.\n\n_Créée depuis FleetView._", comments:[
-            {user:{login:"claude-bot"}, body:"Deux lectures possibles : pondérer **la moyenne générale** seulement, ou aussi les moyennes par trimestre ?\n\nJe pars sur les deux sauf contre-ordre — dis-moi."},
+          // Second fil sur le même repo : illustre les dialogues empilés (un bloc par issue ouverte)
+          // et la question à options (convention **Options :** → boutons de réponse en un clic).
+          {num:21, title:"Moyenne pondérée par coefficient", body:"Le bulletin devrait pondérer la moyenne par les coefficients des matières.\n\n_Créée depuis FleetView._",
+           status:{phase:"question", c:"warn", label:"à toi de répondre", hint:"Claude te pose une question et attend ta réponse pour continuer — choisis une option ou réponds librement."},
+           comments:[
+            {user:{login:"claude-bot"}, body:"La pondération peut s'appliquer à plusieurs endroits — je préfère trancher avec toi.\n\n**Options :**\n1. Pondérer uniquement la moyenne générale\n2. Pondérer aussi les moyennes par trimestre\n3. Pondérer partout et afficher les coefficients dans le tableau\n\n**Recommandation :** option 2 — cohérente partout sans surcharger le tableau.\n\nRéponds ici — un numéro suffit."},
           ]},
         ]},
       {id:"talk-show-oral", type:"service-node", life:"actif", state:"warn", last:"hier", url:"#",
+        next:[{c:"warn", t:"La PR #15 « Lecture audio iOS » est prête (tests verts) — merger, ou demander des changements", act:{id:"open-pr", n:15, label:"Décider ↓"}}],
         pr:{num:15,title:"Lecture audio iOS",checks:"checks ✓ 3/3",files:4,add:118,del:22,body:"Débloque l'AudioContext au premier geste utilisateur. Résout l'issue #12."},
         lines:[L("warn","PR #15 « Lecture audio iOS » — checks ✓, attend ta décision","depuis 15 h",{id:"open-pr",n:15,label:"Examiner"})]},
       {id:"veille-emploi", type:"cron-python", life:"actif", state:"calm", last:"07:05", url:"#",
@@ -478,14 +579,18 @@ function demoModel(){
     ],
     ideas:[
       {num:1,p:"P1",repo:"quiz-capitales",t:"Miniatures automatiques pour les shorts",desc:"Générer la miniature depuis la première question du quiz, avec le drapeau en fond.",cat:"feature",url:"#"},
-      {num:2,p:"P2",repo:"bulletins-viz",t:"Rendre les bulletins plus lisibles",desc:"",cat:"feature",url:"#",waiting:true},
+      // Idée avec question du cadrage en attente : illustre le groupe « ⏳ À toi de répondre »
+      // (question affichée sur place, options cliquables, réponse sans quitter le codex).
+      {num:2,p:"P2",repo:"bulletins-viz",t:"Rendre les bulletins plus lisibles",desc:"",cat:"feature",url:"#",waiting:true,answered:false,qId:"demo-q2",qAt:new Date(Date.now()-3.6e6).toISOString(),
+       question:"🪶 **Cadrage — question**\n« Plus lisibles » peut se jouer sur deux tableaux — lequel vises-tu ?\n\n**Options :**\n1. Le design : contrastes, tailles de police, espacements\n2. Les données : regrouper par matière, trier par moyenne\n3. Les deux, en deux tâches séparées au backlog\n\n**Recommandation :** option 1 — le plus visible pour l'effort.\n\nRéponds ici — un numéro suffit."},
       {num:3,p:"P3",repo:"flotte",t:"Statusline + raccourcis desktop",desc:"",cat:"exploration",url:"#"},
       {num:4,p:"P3",repo:"flotte",t:"Corriger l'alignement du pied de page",desc:"",cat:"bug",url:"#"},
     ],
     attention:[
-      {c:"crit",repo:"quiz-capitales",t:"publish-shorts en échec ×2",small:"il y a 40 min"},
-      {c:"warn",repo:"bulletins-viz",t:"Claude attend ta réponse sur « Moyenne pondérée par coefficient »",small:"il y a 25 min"},
-      {c:"warn",repo:"talk-show-oral",t:"PR #15 attend ta décision",small:"depuis 15 h"},
+      {c:"crit",repo:"quiz-capitales",t:"Le cron publish-shorts échoue ×2",small:"il y a 40 min",verb:"Voir"},
+      {c:"warn",repo:"bulletins-viz",t:"Claude te pose une question sur « Moyenne pondérée par coefficient »",small:"il y a 25 min",verb:"Répondre"},
+      {c:"warn",repo:"codex",t:"Le cadrage te pose une question sur « Rendre les bulletins plus lisibles »",small:"il y a 1 h",idea:2,verb:"Répondre"},
+      {c:"warn",repo:"talk-show-oral",t:"La PR #15 est prête (tests verts)",small:"depuis 15 h",verb:"Décider"},
     ],
     feed:[
       {ts:new Date().toISOString(),c:"ok",repo:"bulletins-viz",txt:"PR #17 self-heal mergée."},
@@ -518,7 +623,8 @@ function renderAttention(){
       <span class="dot" style="--c:var(--${x.c})"></span>
       <span class="repo-name">${esc(x.repo)}</span>
       <span class="txt">${esc(x.t)}${x.small?` <span class="marginalia">· ${esc(x.small)}</span>`:""}</span>
-      <button class="btn-mini" data-open="${esc(x.repo)}">Examiner</button>
+      ${x.idea?`<button class="btn-mini" data-open-idea="${x.idea}">${esc(x.verb||"Répondre")}</button>`
+              :`<button class="btn-mini" data-open="${esc(x.repo)}">${esc(x.verb||"Examiner")}</button>`}
     </div>`).join("");
 }
 function renderFilters(){
@@ -611,7 +717,22 @@ function ideaEditHtml(i){
 function renderIdeas(){
   // Édition en cours : ne pas écraser la saisie au relevé automatique.
   if(ideaUI.edit!==null && $("#ie-title")) return;
+  // Brouillons de réponse au cadrage : capturés avant le re-render, restaurés après
+  // (même protection que les fils de dialogue de la vue projet).
+  const draft={
+    replies: Object.fromEntries([...document.querySelectorAll('textarea[id^="idea-reply-"]')].map(t=>[t.id, t.value])),
+    focusId: document.activeElement ? document.activeElement.id : "",
+  };
   const order={P1:0,P2:1,P3:2};
+  const marks=cadrageMarks(), now=Date.now();
+  // « Réponse envoyée » ne vaut que pour la question COURANTE : si le cadrage a reposé une
+  // question APRÈS l'envoi (qAt plus récent que la marque), l'idée redevient « à toi ».
+  const sentRecently=i=>{
+    const m=marks[i.num];
+    if(!m || !m.sent || now-m.sent>=CADRAGE_SENT_MS) return false;
+    return !(i.qAt && Date.parse(i.qAt)>m.sent);
+  };
+  const runRecently=i=>!!(marks[i.num]&&marks[i.num].run&&now-marks[i.num].run<CADRAGE_RUN_MS);
   let list=model.ideas.slice().sort((a,b)=>order[a.p]-order[b.p]||a.num-b.num);
   $("#ideas-count").textContent=model.ideas.length;
   const repos=[...new Set(model.ideas.map(i=>i.repo))].sort();
@@ -622,17 +743,53 @@ function renderIdeas(){
       <option value="all">Tous les projets</option>
       ${repos.map(r=>`<option value="${esc(r)}"${ideaUI.repoFilter===r?" selected":""}>${esc(r)}</option>`).join("")}
     </select></div>`:"";
+
+  // Trois familles, dans l'ordre d'urgence : question en attente (c'est à TOI),
+  // cadrage en route (c'est à Claude), puis les idées simplement posées.
+  const ask=list.filter(i=>i.waiting && i.question && !i.answered && !sentRecently(i));
+  const busy=list.filter(i=>!ask.includes(i) && (runRecently(i) || (i.waiting && (i.answered||sentRecently(i)))));
+  const rest=list.filter(i=>!ask.includes(i) && !busy.includes(i));
+
+  // Question du cadrage affichée SUR PLACE, avec les options en boutons : fini le détour
+  // par GitHub pour comprendre ce qui bloque et répondre.
+  const askHtml=(i)=>{
+    const po=parseOptions(i.question);
+    const qBody=String(i.question).replace(/^🪶\s*\*\*[^*]*\*\*\s*/,"");
+    return `
+    <div class="idea idea-ask" data-idea="${i.num}">
+      <div class="idea-ask-head">
+        <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
+        <span class="idea-body">${esc(i.t)}<span class="idea-repo">${esc(i.repo)} · le cadrage a besoin de toi pour continuer</span></span>
+        <a class="ghlink" href="${esc(i.url)}" target="_blank" rel="noopener">issue ↗</a>
+      </div>
+      <div class="idea-question md">${md(qBody)}</div>
+      <div class="quick-replies">
+        ${po?po.opts.map(o=>`<button class="btn qr${po.rec===o.n?" btn-primary":""}" data-iqr="${i.num}:${o.n}" title="Envoyer cette réponse">${po.rec===o.n?"⭐ ":""}${o.n}. ${esc(optLabel(o.t))}</button>`).join(""):""}
+        <button class="btn qr" data-iqr-best="${i.num}" title="Le cadrage applique sa recommandation et l'idée part au backlog">👍 Tranche toi-même</button>
+      </div>
+      <div class="reply">
+        <textarea id="idea-reply-${i.num}" placeholder="…ou réponds librement"></textarea>
+        <button type="button" class="btn btn-mic" data-mic="#idea-reply-${i.num}" title="Dicter">🎙️</button>
+        <button class="btn" data-idea-send="${i.num}">Envoyer</button>
+      </div>
+    </div>`;
+  };
+  const busyHtml=(i)=>`
+    <div class="idea" data-idea="${i.num}">
+      <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
+      <span class="idea-body">${esc(i.t)}<span class="idea-repo">${esc(i.repo)} · ${i.answered||sentRecently(i)?"réponse envoyée — le cadrage repart tout seul":"le cadrage travaille"} ; l'idée partira au backlog (onglet Tâches) ou reviendra ici avec une question</span></span>
+      <span class="idea-spin" title="Cadrage en cours">🪶</span>
+    </div>`;
   const rowHtml=(i)=>{
     const open=ideaUI.open===i.num, edit=ideaUI.edit===i.num;
     return `
     <div class="idea${open?" open":""}" data-idea="${i.num}">
       <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
       <span class="idea-body" data-idea-toggle="${i.num}" role="button" tabindex="0">${esc(i.t)}<span class="idea-repo">${esc(i.repo)}${i.waiting?" · ⏳ à préciser":""}${i.desc?" · …":""}</span></span>
-      <button class="idea-launch" data-cadrer="${i.num}" title="${i.waiting?"Relancer le cadrage (après ta réponse sur l'issue)":"Cadrer maintenant : l'idée part au backlog, ou reçoit des questions si elle est floue"}">🪶</button>
+      <button class="idea-launch" data-cadrer="${i.num}" title="Cadrer maintenant : l'idée part au backlog du projet (une question seulement si vraiment ambigu)">🪶</button>
     </div>
     ${open?`<div class="idea-more">${edit?ideaEditHtml(i):`
       ${i.desc?`<p class="idea-desc">${esc(i.desc)}</p>`:""}
-      ${i.waiting?`<p class="idea-desc">⏳ Le cadrage t'a posé des questions — ouvre « issue ↗ », réponds en commentaire, puis 🪶 pour relancer (sinon, repassage chaque matin).</p>`:""}
       <div class="idea-tools">
         <button class="btn-mini" data-idea-edit="${i.num}">✎ Modifier</button>
         <button class="btn-mini" data-idea-del="${i.num}">🗑 Supprimer</button>
@@ -641,14 +798,24 @@ function renderIdeas(){
     </div>`:""}`;
   };
   let html=toolbar;
+  if(ask.length) html+=`<div class="cat-head eyebrow ask-head">⏳ À toi de répondre · <span class="num">${ask.length}</span></div>`+ask.map(askHtml).join("");
+  if(busy.length) html+=`<div class="cat-head eyebrow">🪶 Cadrage en route · <span class="num">${busy.length}</span></div>`+busy.map(busyHtml).join("");
   for(const c of [...Object.keys(IDEA_CATS),""]){
-    const group=list.filter(i=>(i.cat||"")===c);
+    const group=rest.filter(i=>(i.cat||"")===c);
     if(!group.length) continue;
     const head=c?`${IDEA_CATS[c].e} ${IDEA_CATS[c].l}`:"💡 Divers";
     html+=`<div class="cat-head eyebrow">${head} · <span class="num">${group.length}</span></div>`+group.map(rowHtml).join("");
   }
   if(model.ideas.length&&!list.length) html+=`<p style="padding:12px 15px" class="marginalia">Aucune idée pour ce projet.</p>`;
   $("#ideas").innerHTML=html||`<p style="padding:12px 15px" class="marginalia">Codex vide — ajoute une idée avec le bouton ci-dessous.</p>`;
+  // Restauration des brouillons de réponse (relevé auto pendant la frappe).
+  for(const [tid,v] of Object.entries(draft.replies||{})){
+    const el=document.getElementById(tid); if(el && v) el.value=v;
+  }
+  if(draft.focusId.startsWith("idea-reply-")){
+    const el=document.getElementById(draft.focusId);
+    if(el){ el.focus(); const L=el.value.length; try{ el.setSelectionRange(L,L); }catch(_){} }
+  }
 }
 function renderFeed(){
   let html="", day=null;
@@ -808,18 +975,33 @@ function renderDetail(){
     const req=requestFromIssueBody(th.body);
     const msgs=[...(req?[{user:{login:OWNER}, body:req}]:[]), ...(th.comments||[])];
     const big=ui.threadBig===th.num;
+    const st=th.status||null; // absent sur un vieux relevé en cache : on dégrade sans en-tête
     const threadBar=msgs.length>1?`
       <div class="thread-bar">
         <span class="count num">${msgs.length} messages</span>
         <button class="btn-mini" data-act="thread-top">↥ Début</button>
         <button class="btn-mini" data-act="thread-bottom">↧ Dernier</button>
       </div>`:"";
+    // Question en attente : boutons de réponse en un clic — les options que Claude a
+    // proposées (convention **Options :**), et toujours « Fais au mieux » en filet, pour
+    // ne jamais laisser une question sans réponse possible en un geste.
+    let quick="";
+    if(st && st.phase==="question"){
+      const lastClaude=[...(th.comments||[])].reverse().find(c=>c.user && c.user.login!==OWNER);
+      const po=lastClaude?parseOptions(lastClaude.body):null;
+      quick=`<div class="quick-replies">
+        ${po?po.opts.map(o=>`<button class="btn qr${po.rec===o.n?" btn-primary":""}" data-qr="${th.num}:${o.n}" title="Envoyer cette réponse">${po.rec===o.n?"⭐ ":""}${o.n}. ${esc(optLabel(o.t))}</button>`).join(""):""}
+        <button class="btn qr" data-qr-best="${th.num}" title="Claude applique sa recommandation sans autre question">👍 Fais au mieux</button>
+      </div>`;
+    }
     return `
     <div class="block thread-block${big?" full":""}" data-thread="${th.num}">
       <div class="block-head">
         <span class="eyebrow">Dialogue — issue #${th.num} « ${esc(th.title)} »</span>
+        ${st?`<span class="pill" style="--c:var(--${st.c})">${esc(st.label)}</span>`:""}
         <button class="btn-mini${big?" on":""}" data-act="thread-big" data-n="${th.num}">${big?"✕ Fermer":"⛶ Plein écran"}</button>
       </div>
+      ${st?`<p class="thread-hint">${esc(st.hint)}</p>`:""}
       ${threadBar}
       <div class="thread">${msgs.map((m,i)=>{
         const mine=m.user.login===OWNER;
@@ -827,6 +1009,7 @@ function renderDetail(){
           <span class="bubble md">${md(String(m.body||"").replace(/^@claude\s*/i,""))}</span></div>`;
       }).join("")||`<p class="marginalia" style="margin:0">Pas encore de commentaire — la session écrit ici.</p>`}
       </div>
+      ${quick}
       <div class="reply">
         <textarea id="thread-reply-${th.num}" placeholder="Répondre à Claude…"></textarea>
         <button type="button" class="btn btn-mic" data-mic="#thread-reply-${th.num}" title="Dicter">🎙️</button>
@@ -861,6 +1044,20 @@ function renderDetail(){
         <span class="pill" style="--c:${st.v}">${st.label}</span>
       </div>
       <div class="detail-meta">${esc(r.type)} · ${lifeLabel} · relevé ${esc(r.last)}</div>
+      ${Array.isArray(r.next)?(()=>{ // Boîte « Que faire ? » : la réponse à LA question qu'on
+        // se pose en ouvrant un projet. Masquée si le modèle vient d'un vieux relevé en cache
+        // (pas de champ next) : mieux vaut pas de boîte qu'un faux « tout roule ».
+        const nx=r.next;
+        return `<div class="next-box${nx.length?"":" calm"}">
+          <div class="eyebrow"><span class="orn">❧</span>Que faire ?</div>
+          ${nx.length?nx.map(n=>`
+            <div class="next-row">
+              <span class="dot" style="--c:var(--${n.c})"></span>
+              <span class="txt">${esc(n.t)}</span>
+              ${n.act?`<button class="btn-mini" data-act="${n.act.id}" data-n="${n.act.n??""}">${esc(n.act.label)}</button>`:""}
+            </div>`).join("")
+          :`<p class="next-none marginalia">Rien n'attend ta main ici — tout roule.</p>`}
+        </div>`; })():""}
       <div class="kit-row" id="kit-row" hidden>
         <span class="secret-badge">🔑 Secret <code>CLAUDE_CODE_OAUTH_TOKEN</code> manquant sur ce repo —
           requis pour que les sessions Claude puissent démarrer.</span>
@@ -876,8 +1073,10 @@ function renderDetail(){
         ${relatedIdeas.map(i=>`
           <div class="sub-row">
             <span class="prio" style="--c:${PRIO_COLOR[i.p]}">${i.p}</span>
-            <span style="flex:1">${esc(i.t)}${i.waiting?` <span class="marginalia">⏳ à préciser</span>`:""}</span>
-            <button class="idea-launch" data-cadrer="${i.num}" title="${i.waiting?"Relancer le cadrage (après ta réponse sur l'issue)":"Cadrer maintenant : l'idée part au backlog, ou reçoit des questions si elle est floue"}">🪶</button>
+            <span style="flex:1">${esc(i.t)}${i.waiting?` <span class="marginalia">⏳ question au codex</span>`:""}</span>
+            ${i.waiting
+              ?`<button class="idea-launch" data-open-idea="${i.num}" title="Une question t'attend au codex — réponds-y là-bas, la relance est automatique">⏳</button>`
+              :`<button class="idea-launch" data-cadrer="${i.num}" title="Cadrer maintenant : l'idée part au backlog du projet (une question seulement si vraiment ambigu)">🪶</button>`}
           </div>`).join("")}
       </div>`:""}
       ${relatedFeed.length?`
@@ -963,6 +1162,7 @@ Règles de la flotte :
 - Lis MAP.md et CLAUDE.md d'abord ; n'explore que ce qu'ils ne couvrent pas.
 - Vérifie avant de conclure (script verify du repo, sinon build + tests) et dis dans la PR ce qui a été vérifié.
 - Mets à jour BACKLOG.md dans la PR.
+- Si tu dois me poser une question : UNE seule à la fois, avec un bloc « **Options :** » de 2 à 4 réponses numérotées (une ligne chacune, concrètes) puis une ligne « **Recommandation :** option N — pourquoi ». Je peux répondre par un simple numéro.
 
 _Créée depuis FleetView._`;
 }
@@ -1017,10 +1217,18 @@ async function removeIdea(num){
 // Le triage (promotion au backlog ou questions 🪶 + label `à-préciser`) se fait côté Actions ;
 // sans ce bouton, le cron quotidien s'en charge de toute façon.
 async function cadrerIdea(num){
-  if(demo){ toast("Mode démo — rien n'est envoyé. En réel : l'idée part au backlog du projet, ou reçoit des questions si elle est floue."); return; }
+  if(demo){ toast("Mode démo — rien n'est envoyé. En réel : l'idée part au backlog du projet (ou une question apparaît ici si c'est vraiment ambigu)."); return; }
   await gh(`/repos/${OWNER}/${META}/actions/workflows/codex-cadrage.yml/dispatches`,
     {method:"POST",body:{ref:"main",inputs:{issue:String(num)}}});
-  toast("🪶 Cadrage lancé — l'idée sera promue au backlog du projet, ou recevra des questions sur son issue (≈ 1 min).", 6500);
+  toast("🪶 Cadrage lancé (≈ 1 min) — l'idée passe « en route » : elle partira au backlog, ou reviendra ici avec une question.", 6500);
+}
+// Réponse à une question du cadrage : simple commentaire sur l'issue idée — surtout PAS de
+// préfixe @claude (il déclencherait une session claude.yml sur claude-ops). La relance du
+// cadrage est automatique côté claude-ops (déclencheur issue_comment sur les idées à-préciser).
+async function sendIdeaReply(num, text){
+  if(demo){ toast("Mode démo — rien n'est envoyé. En réel : ta réponse part sur l'issue et le cadrage repart tout seul."); return; }
+  await gh(`/repos/${OWNER}/${META}/issues/${num}/comments`,{method:"POST",body:{body:text}});
+  toast("💬 Réponse envoyée — le cadrage repart tout seul (≈ 1 min) : l'idée partira au backlog, ou reviendra avec une question.", 6500);
 }
 async function sendComment(repo,num,text){
   if(demo){ toast("Mode démo — rien n'est envoyé."); return; }
@@ -1175,20 +1383,28 @@ function renderTasks(){
 // et on ouvre claude.ai/code — le geste assumé est copier → coller.
 function composeCloudPrompt({repo, title, desc}){
   const target = repo==="flotte" ? META : repo;
-  const tache = title
-    ? `## Tâche\n${title}${desc?`\n\n${desc}`:""}`
-    : `## Tâche\n_(à préciser dans la session : dis-moi ce que tu veux faire sur ce repo)_`;
+  // Sans tâche fournie (🌩 depuis une carte ou la vue projet) : donner au moins l'état du
+  // repo — le prompt « (à préciser) » nu obligeait à tout re-raconter dans la session.
+  let tache;
+  if(title){
+    tache=`## Tâche\n${title}${desc?`\n\n${desc}`:""}`;
+  } else {
+    const r=model&&model.repos.find(x=>x.id===repo);
+    const ctx=r?r.lines.filter(l=>l.c!=="ok").map(l=>`- ${l.t}`).join("\n"):"";
+    tache=`## Tâche\nJe te la donne au premier message de la session — commence par me demander sur quoi on travaille.${ctx?`\n\nPour situer, où en est le repo :\n${ctx}`:""}`;
+  }
   return `Travaille sur le repo GitHub **${OWNER}/${target}**.
 
 ${tache}
+
+## Méthode
+- Commence par reformuler la tâche en spécification courte — objectif, critères de fin vérifiables, ce qui est hors périmètre — et fais-la-moi valider AVANT de coder. Pose tes questions à ce moment-là, pas en cours de route.
 
 ## Règles de la flotte
 - Lis \`MAP.md\` puis \`CLAUDE.md\` du repo d'abord ; n'explore que ce qu'ils ne couvrent pas.
 - Travaille sur une branche dédiée \`claude/<slug>\`, jamais directement sur la branche par défaut.
 - Vérifie avant de conclure : lance le script verify du repo (souvent \`node scripts/verify.mjs\`) ou build + tests, et regarde le résultat tourner.
-- Ouvre la PR toi-même avec \`gh pr create\` (titre et corps en français) ; mets à jour \`BACKLOG.md\` dans la même PR.
-
-On cadre ensemble ici : pose-moi tes questions au fil de l'eau, je te réponds dans cette session avant que tu n'ailles trop loin.`;
+- Ouvre la PR toi-même avec \`gh pr create\` (titre et corps en français) ; mets à jour \`BACKLOG.md\` dans la même PR.`;
 }
 // Copie synchrone (dans le geste de clic, sans dépendre du focus ni d'un contexte sécurisé) :
 // la voie la plus fiable sur mobile et en http. L'API Clipboard moderne sert de filet.
@@ -1257,7 +1473,10 @@ function launchCloudFromLink(e, ctx){
 // Le lien de la notif rouvre FleetView sur le bon projet (?repo=…).
 function loadNotified(){ try{ return new Set(JSON.parse(localStorage.getItem("fv-notified")||"[]")); }catch(e){ return new Set(); } }
 function saveNotified(set){ try{ localStorage.setItem("fv-notified", JSON.stringify([...set].slice(-300))); }catch(e){} }
-function notifClickUrl(ev){ return location.origin+location.pathname+(ev.repo?"?repo="+enc(ev.repo):""); }
+function notifClickUrl(ev){
+  if(ev.idea) return location.origin+location.pathname+"?idea="+enc(ev.idea);
+  return location.origin+location.pathname+(ev.repo?"?repo="+enc(ev.repo):"");
+}
 // Publication ntfy : POST directement sur l'URL du sujet, métadonnées en query string
 // (l'endpoint canonique — le POST JSON à la racine est refusé par certaines configurations, d'où des 405).
 async function publishNtfy(url, ev){
@@ -1305,15 +1524,35 @@ function seedNotified(){
   if(model && model.notify) for(const ev of model.notify) seen.add(ev.key);
   saveNotified(seen);
 }
-// Deep-link : ?repo=<id> ouvre directement la vue projet, puis nettoie l'URL.
+// L'URL reflète où tu es (?repo=, ?tab=, ?idea=) : recharger la page te laisse SUR PLACE
+// au lieu de te ramener à l'atelier, et les notifications pointent au bon endroit.
+function syncUrl(){
+  try{
+    const q=new URLSearchParams();
+    if(ui.openRepo) q.set("repo", ui.openRepo);
+    const tab=document.body.dataset.tab;
+    if(tab && tab!=="flotte") q.set("tab", tab);
+    if(tab==="idees" && ideaUI.open!==null) q.set("idea", ideaUI.open);
+    history.replaceState(null,"", location.pathname+(q.toString()?"?"+q.toString():""));
+  }catch(e){}
+}
+let pendingIdea=null;
 function readDeepLink(){
   try{
-    const rp=new URLSearchParams(location.search).get("repo");
-    if(rp){ pendingOpen=rp; history.replaceState(null,"",location.pathname); }
+    const q=new URLSearchParams(location.search);
+    const rp=q.get("repo"); if(rp) pendingOpen=rp;
+    const idn=Number(q.get("idea")); if(q.get("idea")!==null && Number.isFinite(idn)) pendingIdea=idn;
+    const tab=q.get("tab");
+    if(["taches","idees","activite"].includes(tab)){
+      document.body.dataset.tab=tab;
+      document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab===tab)));
+    }
   }catch(e){}
 }
 function applyPendingOpen(){
-  if(!pendingOpen || !model) return;
+  if(!model) return;
+  if(pendingIdea!==null){ const n=pendingIdea; pendingIdea=null; openIdea(n); return; }
+  if(!pendingOpen) return;
   const target=pendingOpen; pendingOpen=null;
   openDetail(target);
 }
@@ -1422,7 +1661,23 @@ function openDetail(id){
   }
   document.body.dataset.tab="flotte";
   document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab==="flotte")));
-  renderDetail(); window.scrollTo({top:0});
+  renderDetail(); window.scrollTo({top:0}); syncUrl();
+}
+// Ouvre le codex directement sur une idée (depuis « À traiter » ou une notification ?idea=).
+function openIdea(num){
+  if(!model) return;
+  if(!model.ideas.some(i=>i.num===num)){
+    toast("Cette idée n'est plus au codex — promue au backlog (onglet Tâches), ou retirée.");
+    return;
+  }
+  // Un filtre projet actif peut la masquer : on l'élargit plutôt que d'atterrir sur du vide.
+  if(ideaUI.repoFilter!=="all" && !model.ideas.some(i=>i.num===num && i.repo===ideaUI.repoFilter)) ideaUI.repoFilter="all";
+  document.body.dataset.tab="idees";
+  document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab==="idees")));
+  ui.openRepo=null; renderDetail(); // quitte une éventuelle vue projet (l'onglet codex la masque sur mobile)
+  ideaUI.open=num; renderIdeas(); syncUrl();
+  const el=document.querySelector(`#ideas .idea[data-idea="${num}"]`);
+  if(el){ el.scrollIntoView({block:"center"}); el.classList.add("flash"); setTimeout(()=>el.classList.remove("flash"), 1800); }
 }
 document.addEventListener("click",async(e)=>{
   const b=e.target.closest("button, a");
@@ -1439,6 +1694,7 @@ document.addEventListener("click",async(e)=>{
       // et remonte en haut — le geste standard des barres d'onglets.
       else if(same){ if(ui.openRepo){ ui.openRepo=null; ui.threadBig=null; renderDetail(); } window.scrollTo({top:0}); }
       if(b.dataset.tab==="taches") loadTasks(); // premier tap = lecture des backlogs
+      syncUrl();
       return;
     }
     if(b.dataset.open!==undefined){ openDetail(b.dataset.open); return; }
@@ -1447,9 +1703,34 @@ document.addEventListener("click",async(e)=>{
     // d'où ce handler global — l'écouteur du panneau #ideas ne le gère pas (pas de doublon).
     if(b.dataset.cadrer!==undefined){
       b.disabled=true;
-      try{ await cadrerIdea(Number(b.dataset.cadrer)); }
+      try{
+        await cadrerIdea(Number(b.dataset.cadrer));
+        markCadrage(Number(b.dataset.cadrer),"run"); // l'idée passe « 🪶 en route » sans attendre le relevé
+        renderIdeas();
+      }
       catch(err){ toast("Échec : "+errMsg(err), 6000); }
       b.disabled=false;
+      return;
+    }
+    if(b.dataset.openIdea!==undefined){ openIdea(Number(b.dataset.openIdea)); return; }
+    // Réponse en un clic à une question de session (options proposées par Claude, convention
+    // **Options :**) — le texte complet de l'option part en commentaire, la session reprend.
+    if(b.dataset.qr!==undefined && r){
+      const [num,n]=b.dataset.qr.split(":").map(Number);
+      const th=(r.threadIssues||[]).find(x=>x.num===num);
+      const lastClaude=th&&[...(th.comments||[])].reverse().find(c=>c.user&&c.user.login!==OWNER);
+      const po=lastClaude?parseOptions(lastClaude.body):null;
+      const opt=po&&po.opts.find(o=>o.n===n);
+      if(!opt) return;
+      b.disabled=true;
+      try{ await sendComment(r.id, num, `Option ${n} : ${opt.t}`); await refresh(); }
+      catch(err){ toast("Échec : "+errMsg(err), 6000); b.disabled=false; }
+      return;
+    }
+    if(b.dataset.qrBest!==undefined && r){
+      b.disabled=true;
+      try{ await sendComment(r.id, Number(b.dataset.qrBest), "Fais au mieux : suis ta recommandation, sans autre question."); await refresh(); }
+      catch(err){ toast("Échec : "+errMsg(err), 6000); b.disabled=false; }
       return;
     }
     // Session cloud interactive : les 🌩 sont de vrais liens <a> — on copie le prompt et on
@@ -1483,7 +1764,7 @@ document.addEventListener("click",async(e)=>{
       try{
         switch(b.dataset.act){
           case "back": ui.openRepo=null; ui.threadBig=null; renderDetail();
-            window.scrollTo({top:ui.scrollY||0}); ui.scrollY=0; break;
+            window.scrollTo({top:ui.scrollY||0}); ui.scrollY=0; syncUrl(); break;
           case "open-thread": if(r){ openDetail(r.id); // le fil est dans la vue projet
             const tb=document.querySelector(`.thread-block[data-thread="${n}"]`);
             if(tb) tb.scrollIntoView({block:"start"}); } break;
@@ -1526,6 +1807,9 @@ document.addEventListener("keydown",(e)=>{
   const t=e.target;
   if(t.id && t.id.startsWith("thread-reply-")){
     const btn=document.querySelector(`[data-act="thread-send"][data-n="${t.id.slice("thread-reply-".length)}"]`);
+    if(btn){ e.preventDefault(); btn.click(); }
+  } else if(t.id && t.id.startsWith("idea-reply-")){
+    const btn=document.querySelector(`[data-idea-send="${t.id.slice("idea-reply-".length)}"]`);
     if(btn){ e.preventDefault(); btn.click(); }
   } else if(t.id==="pr-reply-text"){
     const btn=document.querySelector('[data-act="pr-comment-send"]');
@@ -1593,7 +1877,7 @@ $("#tasks-codex-filter").addEventListener("click",()=>{ tasksCodexOnly=!tasksCod
 
 /* Codex : déplier, éditer, supprimer, filtrer par projet (🪶 Cadrer = handler global) */
 $("#ideas").addEventListener("click",async(e)=>{
-  const t=e.target.closest("[data-idea-toggle],[data-idea-edit],[data-idea-del],[data-idea-save],[data-idea-cancel]");
+  const t=e.target.closest("[data-idea-toggle],[data-idea-edit],[data-idea-del],[data-idea-save],[data-idea-cancel],[data-iqr],[data-iqr-best],[data-idea-send]");
   if(!t) return;
   const d=t.dataset;
   try{
@@ -1609,6 +1893,28 @@ $("#ideas").addEventListener("click",async(e)=>{
     } else if(d.ideaDel!==undefined){
       if(!confirm("Retirer cette idée du codex ?")) return;
       t.disabled=true; await removeIdea(Number(d.ideaDel)); await refresh(false);
+    } else if(d.iqr!==undefined){
+      // Option cliquée sur une question du cadrage : la réponse part telle quelle.
+      const [num,n]=d.iqr.split(":").map(Number);
+      const idea=model.ideas.find(x=>x.num===num);
+      const po=idea?parseOptions(idea.question):null;
+      const opt=po&&po.opts.find(o=>o.n===n);
+      if(!opt) return;
+      t.disabled=true;
+      await sendIdeaReply(num, `Option ${n} : ${opt.t}`);
+      markCadrage(num,"sent"); renderIdeas(); refresh(false); // « À traiter » et badge suivent
+    } else if(d.iqrBest!==undefined){
+      t.disabled=true;
+      await sendIdeaReply(Number(d.iqrBest), "Tranche toi-même : applique ta recommandation et promeus l'idée sans autre question.");
+      markCadrage(Number(d.iqrBest),"sent"); renderIdeas(); refresh(false);
+    } else if(d.ideaSend!==undefined){
+      const num=Number(d.ideaSend);
+      const ta=document.getElementById("idea-reply-"+num);
+      const v=ta?ta.value.trim():"";
+      if(!v){ toast("Écris (ou dicte) ta réponse d'abord."); return; }
+      t.disabled=true;
+      await sendIdeaReply(num, v);
+      markCadrage(num,"sent"); renderIdeas(); refresh(false);
     }
   }catch(err){ t.disabled=false; toast("Échec : "+errMsg(err), 6000); }
 });

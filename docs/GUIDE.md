@@ -134,13 +134,19 @@ Le codex n'est **pas** une liste de tâches — c'est la **salle d'attente** des
 vrac (même dictées au micro), le temps qu'elles soient **cadrées**. La liste des tâches, c'est
 les `BACKLOG.md` des repos (vue **Tâches**). Le passage de l'une à l'autre est automatique :
 
-- **Chaque matin**, le workflow `codex-cadrage.yml` (claude-ops, session Haiku) relit les idées
-  en attente. Une idée **limpide** devient un item `- [ ] (Px) titre — contexte/DoD 📱` dans le
-  `BACKLOG.md` du projet visé, et son issue se ferme avec le lien. Une idée **floue** reçoit des
-  **questions 🪶** en commentaire (+ label `à-préciser`, affiché « ⏳ à préciser » au codex) —
-  tu réponds sur l'issue, elle est promue au passage suivant. Le cadrage n'implémente **jamais**.
-- **Tout de suite** : le bouton **🪶 Cadrer** de chaque idée déclenche le même workflow sur
-  cette seule idée, sans attendre le matin.
+- **Chaque matin** (et à la demande via **🪶 Cadrer**), le workflow `codex-cadrage.yml`
+  (claude-ops, session Haiku) relit les idées en attente. Le cadrage **tranche par défaut** :
+  une idée dont l'intention est claire devient un item `- [ ] (Px) titre — contexte/DoD 📱`
+  dans le `BACKLOG.md` du projet visé (les détails manquants sont comblés par des hypothèses
+  raisonnables, **notées dans l'item**), et son issue se ferme. Le cadrage n'implémente **jamais**.
+- **La question est l'exception** : seulement si un choix change radicalement le résultat.
+  Elle arrive alors **dans FleetView** — le codex l'affiche en tête, groupe « ⏳ À toi de
+  répondre », avec **2 à 4 options cliquables** (dont une ⭐ recommandée), un bouton
+  « 👍 Tranche toi-même » et un champ libre. Elle remonte aussi dans « À traiter » et en
+  notification. Dès que tu réponds (un numéro suffit), **le cadrage repart tout seul**
+  (déclencheur `issue_comment` côté claude-ops) — plus rien à recliquer.
+- Pendant qu'il travaille, l'idée s'affiche « **🪶 Cadrage en route** » ; à la promotion,
+  elle quitte le codex et sa tâche apparaît dans la vue **Tâches** (badge 📱).
 
 Les priorités suivent l'idée jusqu'au backlog :
 - **P1** — dès que possible · **P2** — quand j'en ai envie · **P3** — un jour peut-être.
@@ -220,9 +226,15 @@ Issue directe (fire-and-forget) :
 
 Idée du codex :
    Toi : 💡 idée en vrac ─▶ cadrage auto (chaque matin, ou 🪶) ─▶ item 📱 au BACKLOG.md du projet
-     │        (floue : questions 🪶 sur l'issue · ⏳ à préciser → tu réponds → promue)
+     │        (vraiment ambiguë : question à options DANS le codex → tu cliques une option
+     │         → le cadrage repart tout seul → promue)
    Toi : ⚡ ou 🌩 depuis la vue Tâches, quand tu décides de la lancer
 ```
+
+> 💬 **Quand une session te pose une question** (issue directe), elle propose désormais
+> **2 à 4 options numérotées + sa recommandation** (convention demandée dans le corps de
+> l'issue) : FleetView les affiche en **boutons** dans le fil — un clic répond ; « 👍 Fais
+> au mieux » est toujours là si tu ne veux pas trancher.
 
 ---
 
@@ -245,7 +257,31 @@ des PRs », et rafraîchir le registre (`node scripts/fleet.mjs` sur claude-ops)
 
 ---
 
-## 7. Thèmes
+## 7. Notifications
+
+Trois étages, du plus simple au plus complet :
+
+1. **Notifications de l'appareil** (⚙ → « Activer sur cet appareil ») — FleetView notifie
+   directement quand une action t'attend : question de Claude, PR prête, question du cadrage.
+   Le clic ouvre le bon endroit. **Limite** : ça ne marche que tant que FleetView est ouvert
+   (même en arrière-plan) — une page web fermée ne peut pas surveiller.
+2. **ntfy depuis l'app** (⚙ → champ URL) — pareil, mais livré via l'app ntfy. Même limite.
+3. **Le veilleur de la flotte** — pour être notifié **même app fermée** : un cron GitHub
+   Actions de CE repo (`veilleur.yml`, toutes les 15 min, gratuit car repo public) surveille
+   la flotte côté serveur et pousse sur ntfy. Activation en 2 minutes, sans terminal :
+   - pose deux secrets sur `fleetview` (Settings → Secrets and variables → Actions) :
+     **`FLEET_GH_TOKEN`** (PAT fine-grained : Contents+Issues+Pull requests+Actions en lecture
+     sur la flotte — celui de claude-ops convient) et **`NTFY_TOPIC`** (le nom de ton sujet
+     ntfy secret, le même que côté claude-ops) ;
+   - abonne l'app ntfy de ton téléphone à ce sujet ;
+   - c'est tout — sans les secrets, le cron sort immédiatement sans rien faire.
+
+   > Si le veilleur est actif, laisse le champ ntfy de l'étage 2 **vide** : sinon chaque
+   > événement arrive en double (une fois par l'app ouverte, une fois par le veilleur).
+
+---
+
+## 8. Thèmes
 
 Six thèmes, au sélecteur en haut à droite, mémorisés par navigateur :
 
@@ -258,18 +294,18 @@ et étiquettes sont toujours en mono (IBM Plex Mono).
 
 ---
 
-## 8. Sur téléphone
+## 9. Sur téléphone
 
 FleetView est une **PWA** : ouvre l'URL (GitHub Pages, une fois le repo public), puis
 « Ajouter à l'écran d'accueil ». Elle s'ouvre en plein écran comme une app, avec la barre
 d'onglets basse. Le token se saisit une fois par appareil.
 
 > Tant que le repo est **privé**, il n'y a pas de version en ligne (Pages gratuit = repo public).
-> On l'utilise alors en local. Passer en public n'expose **que l'outil**, jamais tes données (§9).
+> On l'utilise alors en local. Passer en public n'expose **que l'outil**, jamais tes données (§10).
 
 ---
 
-## 9. Sécurité & vie privée
+## 10. Sécurité & vie privée
 
 - **Aucune donnée de la flotte n'est dans le code.** États, PRs, noms de repos réels : tout
   est récupéré à l'exécution via l'API, avec ton token. Le code source ne contient que la
@@ -282,7 +318,7 @@ d'onglets basse. Le token se saisit une fois par appareil.
 
 ---
 
-## 10. Coût & limites
+## 11. Coût & limites
 
 - **Interface : 0 €.** GitHub Pages (gratuit) + API GitHub. Un relevé consomme ~25 requêtes
   sur une limite de 5 000/h — très large. Les *gestes simples* ne coûtent rien.
@@ -297,7 +333,7 @@ d'onglets basse. Le token se saisit une fois par appareil.
 
 ---
 
-## 11. Architecture (pour développer)
+## 12. Architecture (pour développer)
 
 Trois fichiers, aucune dépendance JS, aucun build.
 
@@ -325,6 +361,9 @@ Trois fichiers, aucune dépendance JS, aucun build.
 | Nouveau thème | un bloc `html[data-fv-theme="nom"]{ … }` dans `styles.css` + une `<option>` |
 | Lanceur de session cloud | `composeCloudPrompt()` + `launchCloud()` — compose le prompt, le copie, ouvre claude.ai/code |
 | Issue directe (Actions) | `createRequest()` + `directBody()` + le déclencheur `@claude` du workflow du kit |
+| Questions à options (boutons) | `parseOptions()` (convention `**Options :**` + `**Recommandation :**`) + les handlers `data-qr`/`data-iqr` |
+| Veilleur (notifs app fermée) | `scripts/veilleur.mjs` + `.github/workflows/veilleur.yml` (cron 15 min, secrets `FLEET_GH_TOKEN` + `NTFY_TOPIC`) |
+| État d'URL (?repo/?tab/?idea) | `syncUrl()` + `readDeepLink()` — recharger laisse sur place, les notifs pointent au bon endroit |
 
 **Pièges** (voir aussi le haut de `MAP.md` et `CLAUDE.md`) :
 - Les labels sont créés à la volée par `ensureLabel()` — ne pas supposer qu'ils existent.
@@ -334,7 +373,7 @@ Trois fichiers, aucune dépendance JS, aucun build.
 
 ---
 
-## 12. Dépannage
+## 13. Dépannage
 
 | Symptôme | Piste |
 |---|---|
@@ -342,12 +381,14 @@ Trois fichiers, aucune dépendance JS, aucun build.
 | Un projet n'apparaît pas | Absent de `fleet.json` : lance `node scripts/fleet.mjs` sur claude-ops. |
 | « Lancer » ne déclenche rien côté GitHub | Le repo cible n'a pas le workflow `claude.yml`, ou le secret `CLAUDE_CODE_OAUTH_TOKEN` manque, ou « Actions crée des PRs » est désactivé. |
 | Le dialogue d'une issue directe reste vide | La session Actions n'a pas encore commenté — patiente un cycle de relevé (~1-2 min) ou vérifie le run Actions. |
+| Une idée reste bloquée « à préciser » | Sa question est affichée dans le codex (groupe « ⏳ À toi de répondre ») : clique une option ou réponds — le cadrage repart tout seul. |
+| Pas de notification quand l'app est fermée | C'est le rôle du **veilleur** (§7) : vérifie que les secrets `FLEET_GH_TOKEN` et `NTFY_TOPIC` sont posés sur fleetview et que le cron `veilleur.yml` est vert. |
 | Le bouton 🌩 n'ouvre pas de session | Le prompt est copié mais le navigateur bloque les pop-ups : autorise-les, ou va sur claude.ai/code et colle (Ctrl/Cmd+V). Si la copie a échoué, une fenêtre affiche le prompt à copier à la main. |
 | Polices « fades » au premier affichage | Google Fonts pas encore chargé (réseau lent) ; le fallback s'affiche puis bascule. |
 
 ---
 
-## 13. Feuille de route
+## 14. Feuille de route
 
 Le gros du confort est déjà livré (service worker + cache hors-ligne, icônes PWA PNG maskable,
 journal de run en direct, secret Claude au bootstrap, quota API, notifications ntfy/natives,
@@ -356,8 +397,6 @@ lanceur de session cloud). Ce qui reste, dans le [BACKLOG](../BACKLOG.md) :
 - **Registre rafraîchissable depuis l'interface** — un bouton « Rafraîchir le registre » + un
   déclenchement automatique en fin de « Nouveau projet » (via un workflow `fleet-refresh.yml` côté
   claude-ops), pour qu'un projet créé apparaisse dans l'atelier sans passer par un terminal.
-- **Mobile : « À traiter » visible partout** — un badge sur l'onglet Atelier + l'heure du dernier
-  relevé lisible depuis Codex/Chroniques.
 
 Convention du repo : 1 item = 1 session = 1 PR ; vérifier avec `node scripts/verify.mjs` avant
 de conclure ; commits en français, branche + PR (jamais de push direct sur `main`).

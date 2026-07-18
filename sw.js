@@ -3,7 +3,7 @@
 "use strict";
 
 // Version du cache : à incrémenter quand la coquille change (purge les anciens à l'activation).
-const VERSION = "fleetview-shell-v4";
+const VERSION = "fleetview-shell-v5";
 
 // Coquille pré-cachée. Chemins RELATIFS : le SW vit sous /fleetview/ sur GitHub Pages,
 // ils résolvent donc dans ce sous-dossier (et en local sous /).
