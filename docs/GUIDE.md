@@ -263,8 +263,9 @@ Trois étages, du plus simple au plus complet :
 
 1. **Notifications de l'appareil** (⚙ → « Activer sur cet appareil ») — FleetView notifie
    directement quand une action t'attend : question de Claude, PR prête, question du cadrage.
-   Le clic ouvre le bon endroit. **Limite** : ça ne marche que tant que FleetView est ouvert
-   (même en arrière-plan) — une page web fermée ne peut pas surveiller.
+   Le clic ouvre le bon endroit. **Limite** : ça ne marche que tant que l'onglet FleetView
+   est ouvert **et visible** (le relevé se met en pause en arrière-plan) — une page web
+   fermée ou cachée ne surveille pas.
 2. **ntfy depuis l'app** (⚙ → champ URL) — pareil, mais livré via l'app ntfy. Même limite.
 3. **Le veilleur de la flotte** — pour être notifié **même app fermée** : un cron GitHub
    Actions de CE repo (`veilleur.yml`, toutes les 15 min, gratuit car repo public) surveille

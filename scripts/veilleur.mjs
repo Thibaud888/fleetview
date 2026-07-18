@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // Veilleur de la flotte — pousse une notification ntfy quand un événement actionnable
-// APPARAÎT, même si FleetView est fermé. L'app ouverte a ses notifications natives ;
-// app fermée, personne ne surveillait : ce cron comble ce trou. Zéro dépendance.
+// APPARAÎT, même si FleetView est fermé. L'app ouverte-et-visible a ses notifications
+// natives ; onglet en arrière-plan ou app fermée, personne ne surveillait : ce cron comble
+// ce trou. Zéro dépendance.
 //
 // Tourne en GitHub Actions sur CE repo (public → minutes gratuites), toutes les 15 min
-// (.github/workflows/veilleur.yml). SANS ÉTAT : on ne signale que ce qui est apparu dans
-// la fenêtre écoulée (WINDOW_MIN, défaut 20 min → léger recouvrement assumé, un doublon
-// rare vaut mieux qu'un état stocké qui peut fuir ou se perdre).
+// (.github/workflows/veilleur.yml). SANS ÉTAT stocké : la fenêtre va du début du précédent
+// run TERMINÉ (−2 min de recouvrement) à maintenant — l'historique Actions sert d'état.
+// « Terminé » et pas « réussi » : après une panne ntfy (runs en échec), se caler sur le
+// dernier succès re-notifierait toute la panne à chaque cron.
 //
 // Secrets requis (Settings → Secrets and variables → Actions du repo fleetview) :
 //   FLEET_GH_TOKEN — PAT fine-grained : lecture Contents+Issues+Pull requests+Actions
@@ -17,7 +19,7 @@
 const OWNER = "Thibaud888";
 const META = "claude-ops";
 const APP_URL = "https://thibaud888.github.io/fleetview/";
-const WINDOW_MIN = Number(process.env.WINDOW_MIN ?? 20);
+const WINDOW_MIN = Number(process.env.WINDOW_MIN ?? 20); // repli si pas d'historique
 
 const token = process.env.FLEET_GH_TOKEN;
 const topic = process.env.NTFY_TOPIC;
@@ -28,6 +30,19 @@ if (!token || !topic) {
 
 let since = Date.now() - WINDOW_MIN * 60_000;
 const inWindow = (iso) => iso && new Date(iso).getTime() >= since;
+// Même frontière de confiance que l'app : seuls les bots ([bot] en suffixe — un login
+// GitHub ne peut pas contenir de crochets) parlent au nom de Claude. Sur un repo public,
+// le commentaire d'un tiers ne doit pas déclencher « Claude attend ta réponse ».
+const isBot = (login) => /\[bot\]$/i.test(String(login || ""));
+// Vraie question seulement (même règle que l'app) : bloc **Options :**, ou DERNIÈRE ligne
+// non vide finissant par « ? » — un commentaire d'étape ou un rapport final de session
+// ne doit pas pousser « Claude attend ta réponse ».
+const asksQuestion = (body) => {
+  const s = String(body || "");
+  if (/\*\*Options\s*:?\s*\*\*/i.test(s)) return true;
+  const lines = s.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  return lines.length > 0 && /\?$/.test(lines[lines.length - 1]);
+};
 
 async function gh(path) {
   const res = await fetch("https://api.github.com" + path, {
@@ -39,6 +54,13 @@ async function gh(path) {
   });
   if (!res.ok) throw new Error(`GitHub ${res.status} sur ${path}`);
   return res.json();
+}
+// Dernier commentaire RÉEL d'une issue : l'API pagine en ordre ascendant — viser la
+// dernière page via le compteur `comments`, sinon on relirait à jamais le 100e.
+async function lastComment(repo, num, count) {
+  const page = Math.max(1, Math.ceil(count / 100));
+  const comments = await gh(`/repos/${OWNER}/${repo}/issues/${num}/comments?per_page=100&page=${page}`);
+  return comments[comments.length - 1];
 }
 
 async function notify(ev) {
@@ -54,14 +76,15 @@ async function notify(ev) {
 
 const events = [];
 
-// 0. Fenêtre réelle : depuis le début du précédent run réussi du veilleur (−2 min de
-// recouvrement). Les crons GitHub dérivent (10 à 40 min aux heures chargées) : une fenêtre
-// fixe raterait ce qui tombe dans le trou. L'historique Actions sert d'état — rien à stocker.
+// 0. Fenêtre : depuis le début du précédent run TERMINÉ de ce workflow (−2 min de
+// recouvrement) — les crons GitHub dérivent (10 à 40 min aux heures chargées), une fenêtre
+// fixe raterait le trou ; une fenêtre plancher systématique doublerait tout. Repli : WINDOW_MIN.
 try {
-  const prev = await gh(`/repos/${OWNER}/fleetview/actions/workflows/veilleur.yml/runs?status=success&per_page=1`);
+  const prev = await gh(`/repos/${OWNER}/fleetview/actions/workflows/veilleur.yml/runs?status=completed&per_page=1`);
   const run = (prev.workflow_runs || [])[0];
-  if (run) since = Math.min(since, new Date(run.run_started_at || run.created_at).getTime() - 120_000);
+  if (run) since = new Date(run.run_started_at || run.created_at).getTime() - 120_000;
 } catch (e) { console.log(`(fenêtre par défaut ${WINDOW_MIN} min) ${e.message}`); }
+console.log(`Fenêtre : depuis ${new Date(since).toISOString()}`);
 
 // 1. Registre : les repos suivis (tout sauf archivés/gelés).
 const ff = await gh(`/repos/${OWNER}/${META}/contents/fleet/fleet.json`);
@@ -70,53 +93,64 @@ const suivis = new Set(fleet
   .filter((r) => !["archivé", "archive", "gelé"].includes(String(r.statut || "").toLowerCase()))
   .map((r) => r.repo));
 
-// 2. Questions de Claude sur les issues `claude` ouvertes (dernier commentaire pas de Thibaud,
-//    apparu dans la fenêtre).
-const issuesRes = await gh(`/search/issues?q=${encodeURIComponent(`user:${OWNER} is:issue is:open label:claude`)}&per_page=50`);
-for (const is of issuesRes.items || []) {
-  const repo = is.repository_url.split("/").pop();
-  if (!suivis.has(repo) || !is.comments) continue;
-  if (!inWindow(is.updated_at)) continue; // fil sans activité récente : inutile de payer la requête
-  try {
-    const comments = await gh(`/repos/${OWNER}/${repo}/issues/${is.number}/comments?per_page=100`);
-    const last = comments[comments.length - 1];
-    if (last && last.user.login !== OWNER && inWindow(last.created_at)) {
-      events.push({ title: `${repo} — Claude attend ta réponse`, msg: is.title,
-        tag: "speech_balloon", click: `${APP_URL}?repo=${encodeURIComponent(repo)}` });
-    }
-  } catch (e) { console.log(`(ignoré) commentaires ${repo}#${is.number} : ${e.message}`); }
-}
+// 2. PRs ouvertes d'abord : servent aussi à taire les questions d'issues déjà couvertes
+// par une PR (même règle que l'app : « la PR parle pour elle »).
+const prsRes = await gh(`/search/issues?q=${encodeURIComponent(`user:${OWNER} is:pr is:open`)}&sort=updated&order=desc&per_page=100`);
+const openPRs = (prsRes.items || []).map((p) => ({ ...p, repo: p.repository_url.split("/").pop() }));
 
-// 3. PRs : prête (tous les checks verts) ou en échec — au moment où les checks se terminent.
-const prsRes = await gh(`/search/issues?q=${encodeURIComponent(`user:${OWNER} is:pr is:open`)}&per_page=50`);
-for (const p of prsRes.items || []) {
-  const repo = p.repository_url.split("/").pop();
-  if (!suivis.has(repo)) continue;
+for (const p of openPRs) {
+  if (!suivis.has(p.repo)) continue;
   try {
-    const d = await gh(`/repos/${OWNER}/${repo}/pulls/${p.number}`);
-    const cr = await gh(`/repos/${OWNER}/${repo}/commits/${d.head.sha}/check-runs?per_page=30`);
+    const d = await gh(`/repos/${OWNER}/${p.repo}/pulls/${p.number}`);
+    const cr = await gh(`/repos/${OWNER}/${p.repo}/commits/${d.head.sha}/check-runs?per_page=30`);
     const runs = cr.check_runs || [];
-    if (!runs.length || runs.some((c) => c.status !== "completed")) continue;
+    if (!runs.length) {
+      // Pas de CI sur cette PR : l'app la classe quand même « attend ta décision » —
+      // notifier à sa création, sinon le filet « app fermée » a un trou.
+      if (inWindow(p.created_at)) {
+        events.push({ title: `${p.repo} — PR #${p.number} attend ta décision`, msg: p.title,
+          tag: "white_check_mark", click: `${APP_URL}?repo=${encodeURIComponent(p.repo)}` });
+      }
+      continue;
+    }
+    if (runs.some((c) => c.status !== "completed")) continue;
     const doneAt = Math.max(...runs.map((c) => new Date(c.completed_at || 0).getTime()));
     if (doneAt < since) continue; // les checks ne viennent pas de se terminer
     // `cancelled` compte comme échec : même règle que l'app (checks.bad de loadAll) —
     // sinon le veilleur annonce « prête à merger » une PR que l'app affiche en échec.
     const bad = runs.filter((c) => ["failure", "timed_out", "cancelled"].includes(c.conclusion)).length;
     events.push(bad
-      ? { title: `${repo} — tests de la PR #${p.number} en échec`, msg: p.title,
-          tag: "x", click: `${APP_URL}?repo=${encodeURIComponent(repo)}` }
-      : { title: `${repo} — PR #${p.number} prête à merger`, msg: p.title,
-          tag: "white_check_mark", click: `${APP_URL}?repo=${encodeURIComponent(repo)}` });
-  } catch (e) { console.log(`(ignoré) PR ${repo}#${p.number} : ${e.message}`); }
+      ? { title: `${p.repo} — tests de la PR #${p.number} en échec`, msg: p.title,
+          tag: "x", click: `${APP_URL}?repo=${encodeURIComponent(p.repo)}` }
+      : { title: `${p.repo} — PR #${p.number} prête à merger`, msg: p.title,
+          tag: "white_check_mark", click: `${APP_URL}?repo=${encodeURIComponent(p.repo)}` });
+  } catch (e) { console.log(`(ignoré) PR ${p.repo}#${p.number} : ${e.message}`); }
+}
+
+// 3. Questions de Claude sur les issues `claude` ouvertes : dernier commentaire d'un BOT,
+// qui pose une VRAIE question, dans la fenêtre, et sans PR déjà ouverte pour cette issue.
+const issuesRes = await gh(`/search/issues?q=${encodeURIComponent(`user:${OWNER} is:issue is:open label:claude`)}&sort=updated&order=desc&per_page=100`);
+for (const is of issuesRes.items || []) {
+  const repo = is.repository_url.split("/").pop();
+  if (!suivis.has(repo) || !is.comments) continue;
+  if (!inWindow(is.updated_at)) continue; // fil sans activité récente : inutile de payer la requête
+  const linkedPR = openPRs.some((p) => p.repo === repo && new RegExp(`#${is.number}\\b`).test(p.body || ""));
+  if (linkedPR) continue; // la PR parle pour elle (et a ses propres notifications)
+  try {
+    const last = await lastComment(repo, is.number, is.comments);
+    if (last && isBot(last.user.login) && asksQuestion(last.body) && inWindow(last.created_at)) {
+      events.push({ title: `${repo} — Claude attend ta réponse`, msg: is.title,
+        tag: "speech_balloon", click: `${APP_URL}?repo=${encodeURIComponent(repo)}` });
+    }
+  } catch (e) { console.log(`(ignoré) commentaires ${repo}#${is.number} : ${e.message}`); }
 }
 
 // 4. Questions du cadrage sur les idées du codex (dernier commentaire 🪶 dans la fenêtre).
 try {
-  const idees = await gh(`/repos/${OWNER}/${META}/issues?labels=${encodeURIComponent("idée,à-préciser")}&state=open&per_page=50`);
+  const idees = await gh(`/repos/${OWNER}/${META}/issues?labels=${encodeURIComponent("idée,à-préciser")}&state=open&per_page=100`);
   for (const i of idees) {
     if (i.pull_request || !i.comments) continue;
-    const comments = await gh(`/repos/${OWNER}/${META}/issues/${i.number}/comments?per_page=100`);
-    const last = comments[comments.length - 1];
+    const last = await lastComment(META, i.number, i.comments);
     if (last && /^🪶/.test(last.body || "") && inWindow(last.created_at)) {
       events.push({ title: "codex — le cadrage te pose une question", msg: i.title,
         tag: "pencil2", click: `${APP_URL}?idea=${i.number}` });
@@ -125,7 +159,7 @@ try {
 } catch (e) { console.log(`(ignoré) codex : ${e.message}`); }
 
 // 5. Envoi.
-if (!events.length) { console.log(`Rien de nouveau dans la fenêtre (${WINDOW_MIN} min).`); process.exit(0); }
+if (!events.length) { console.log("Rien de nouveau dans la fenêtre."); process.exit(0); }
 let sent = 0;
 for (const ev of events) {
   try { await notify(ev); sent++; }

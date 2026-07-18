@@ -137,29 +137,55 @@ function timeUntil(ms){
 // Retourne {opts:[{n,t}], rec:N|null} ou null si rien d'exploitable.
 function parseOptions(body){
   const s=String(body||"");
+  // Collecte une liste numérotée contiguë dans un paquet de lignes.
+  // Tolérance 240 (la convention dit < 140) : une option un peu longue ne doit pas faire
+  // disparaître silencieusement des boutons du choix présenté.
+  const collect=(lines)=>{
+    const opts=[];
+    for(const l of lines){
+      const mm=l.trim().match(/^([1-6])[.)]\s+(.{3,240})$/);
+      if(mm) opts.push({n:Number(mm[1]), t:mm[2].trim()});
+      else if(opts.length) break; // fin de la liste contiguë
+    }
+    return (opts.length>=2 && opts.length<=4) ? opts : null;
+  };
   const m=s.match(/\*\*Options\s*:?\s*\*\*\s*\n([\s\S]*)/i);
-  let lines;
-  if(m) lines=m[1].split(/\n/);
+  let opts=null;
+  if(m) opts=collect(m[1].split(/\n/));
   else if(/\?\s*$/m.test(s)){
-    // Repli : seule la liste qui SUIT la dernière question compte — une liste d'étapes
-    // en début de commentaire ne doit pas devenir des boutons de réponse absurdes.
+    // Repli : d'abord la liste qui SUIT la dernière question (une liste d'étapes en début
+    // de commentaire ne doit pas devenir des boutons) ; sinon, liste AVANT la question
+    // (« 1. … 2. … Laquelle ? ») — le format existait avant la convention.
     const all=s.split(/\n/);
     let lastQ=-1; all.forEach((l,i)=>{ if(/\?\s*$/.test(l.trim())) lastQ=i; });
-    lines=all.slice(lastQ+1);
+    opts=collect(all.slice(lastQ+1)) || collect(all);
   }
-  else return null;
-  const opts=[];
-  for(const l of lines){
-    const mm=l.trim().match(/^([1-6])[.)]\s+(.{3,140})$/);
-    if(mm) opts.push({n:Number(mm[1]), t:mm[2].trim()});
-    else if(opts.length) break; // fin de la liste contiguë
-  }
-  if(opts.length<2 || opts.length>4) return null;
+  if(!opts) return null;
   const rm=s.match(/recommandation\s*:?\**\s*option\s*([1-6])/i) || s.match(/je\s+recommande\s+l['’]option\s*([1-6])/i);
-  return {opts, rec:rm?Number(rm[1]):null};
+  let rec=rm?Number(rm[1]):null;
+  if(rec && !opts.some(o=>o.n===rec)) rec=null; // pas d'⭐ fantôme sur une option absente
+  return {opts, rec};
 }
 // Libellé court d'une option pour un bouton (sans balisage markdown).
 function optLabel(t){ const s=String(t).replace(/\*\*|`/g,""); return s.length>64?s.slice(0,62)+"…":s; }
+
+// Frontière de confiance : seuls les BOTS parlent au nom de Claude (github-actions[bot],
+// claude[bot]…). Sur un repo public, n'importe qui peut commenter une issue — un tiers ne
+// doit ni s'afficher « Claude », ni produire des boutons de réponse en un clic.
+// Suffixe [bot] UNIQUEMENT : un login GitHub ne peut pas contenir de crochets, alors qu'un
+// humain peut très bien s'appeler « claude-… » — pas de préfixe dans le test.
+function isBotLogin(login){ return /\[bot\]$/i.test(String(login||"")); }
+// La question est-elle vraiment une question ? Bloc Options, ou DERNIÈRE ligne non vide en
+// « ? » — pas /\?\s*$/m sur tout le corps : un rapport contenant une ligne interrogative
+// ne doit pas basculer le fil en « à toi de répondre ».
+function endsWithQuestion(body){
+  const lines=String(body||"").split(/\n/).map(l=>l.trim()).filter(Boolean);
+  return lines.length>0 && /\?$/.test(lines[lines.length-1]);
+}
+// Neutralise les @mentions d'un texte RELAYÉ (écrit par Claude, reposté par l'app) : un
+// « @claude » dans une option déclencherait une session parasite (test de sous-chaîne côté
+// dispatch.yml) et un @tiers le notifierait. Espace zéro-largeur : invisible, casse la mention.
+function unmention(s){ return String(s??"").replace(/@(\w)/g, "@​$1"); }
 
 // Suivi local du cadrage (🪶 lancé, réponse envoyée) : purement cosmétique — fait
 // patienter l'interface entre le geste et le prochain relevé. Borné, jamais synchronisé.
@@ -369,8 +395,10 @@ function buildModel(fleet, D){
       // `claudeRunning` est un signal PAR REPO (pas par issue) : si le dernier commentaire
       // de CE fil est une question de Claude, elle prime — sinon la session en cours d'une
       // AUTRE issue masquerait la question et son entrée « À traiter ».
-      const lastFromClaude = lastC && lastC.user && lastC.user.login!==OWNER;
-      const asksQuestion = lastFromClaude && (!!parseOptions(lastC.body) || /\?\s*$/m.test(lastC.body||""));
+      // isBotLogin et pas !==OWNER : un tiers qui commente une issue d'un repo public ne
+      // doit pas passer pour Claude (ni déclencher l'état « à toi de répondre »).
+      const lastFromClaude = lastC && lastC.user && isBotLogin(lastC.user.login);
+      const asksQuestion = lastFromClaude && (!!parseOptions(lastC.body) || endsWithQuestion(lastC.body));
       let status;
       if(linkedPR){
         // La PR parle pour elle (état et lignes traités plus bas) — mais le fil reste
@@ -495,7 +523,11 @@ function buildModel(fleet, D){
     const comments=(D.ideaComments||{})[i.number]||[];
     const lastC=comments[comments.length-1];
     const lastQ=[...comments].reverse().find(c=>/^🪶/.test(c.body||""));
-    const answered=!!(lastC && lastC.user && lastC.user.login===OWNER);
+    // « Répondu » = le dernier mot du fil n'est PAS un 🪶 du cadrage — critère par PRÉFIXE,
+    // comme le cron et le veilleur. Par AUTEUR, ça casse : le cadrage poste via le PAT
+    // (GH_TOKEN=FLEET_GH_TOKEN), ses questions apparaissent authored Thibaud888 et
+    // passeraient pour des réponses — idée bloquée à jamais, sans rien d'affiché.
+    const answered=!!(lastC && !/^🪶/.test(lastC.body||""));
     return {num:i.number, p, repo:m?m[1]:"flotte", t:i.title, desc,
       cat:IDEA_CATS[catRaw]?catRaw:null, waiting,
       question: waiting&&lastQ ? lastQ.body : "", answered,
@@ -557,15 +589,15 @@ function demoModel(){
            status:{phase:"session", c:"info", label:"session en cours", hint:"Claude travaille — rien à faire pour l'instant, le journal du run défile plus bas."},
            comments:[
             {user:{login:OWNER}, body:"Ajouter un bouton pour exporter le bulletin courant en PDF."},
-            {user:{login:"claude-bot"}, body:"## Spécification\n\n**Objectif** : bouton « Exporter en PDF » dans la barre du bulletin.\n\n- Rendu client via `window.print` + feuille `@media print` dédiée — aucune dépendance\n- Critères de done :\n- [x] le PDF reprend le graphe et le tableau\n- [ ] sans la navigation\n\nJ'enchaîne l'implémentation."},
-            {user:{login:"claude-bot"}, body:"Fait : bouton ajouté, styles d'impression en place, **PR #19 ouverte** (Closes #18).\n\n```bash\nnode scripts/verify.mjs   # VERIFY OK\n```\nVérifié : l'aperçu d'impression montre le bulletin seul."},
+            {user:{login:"claude[bot]"}, body:"## Spécification\n\n**Objectif** : bouton « Exporter en PDF » dans la barre du bulletin.\n\n- Rendu client via `window.print` + feuille `@media print` dédiée — aucune dépendance\n- Critères de done :\n- [x] le PDF reprend le graphe et le tableau\n- [ ] sans la navigation\n\nJ'enchaîne l'implémentation."},
+            {user:{login:"claude[bot]"}, body:"Fait : bouton ajouté, styles d'impression en place, **PR #19 ouverte** (Closes #18).\n\n```bash\nnode scripts/verify.mjs   # VERIFY OK\n```\nVérifié : l'aperçu d'impression montre le bulletin seul."},
           ]},
           // Second fil sur le même repo : illustre les dialogues empilés (un bloc par issue ouverte)
           // et la question à options (convention **Options :** → boutons de réponse en un clic).
           {num:21, title:"Moyenne pondérée par coefficient", body:"Le bulletin devrait pondérer la moyenne par les coefficients des matières.\n\n_Créée depuis FleetView._",
            status:{phase:"question", c:"warn", label:"à toi de répondre", hint:"Claude te pose une question et attend ta réponse pour continuer — choisis une option ou réponds librement."},
            comments:[
-            {user:{login:"claude-bot"}, body:"La pondération peut s'appliquer à plusieurs endroits — je préfère trancher avec toi.\n\n**Options :**\n1. Pondérer uniquement la moyenne générale\n2. Pondérer aussi les moyennes par trimestre\n3. Pondérer partout et afficher les coefficients dans le tableau\n\n**Recommandation :** option 2 — cohérente partout sans surcharger le tableau.\n\nRéponds ici — un numéro suffit."},
+            {user:{login:"claude[bot]"}, body:"La pondération peut s'appliquer à plusieurs endroits — je préfère trancher avec toi.\n\n**Options :**\n1. Pondérer uniquement la moyenne générale\n2. Pondérer aussi les moyennes par trimestre\n3. Pondérer partout et afficher les coefficients dans le tableau\n\n**Recommandation :** option 2 — cohérente partout sans surcharger le tableau.\n\nRéponds ici — un numéro suffit."},
           ]},
         ]},
       {id:"talk-show-oral", type:"service-node", life:"actif", state:"warn", last:"hier", url:"#",
@@ -730,7 +762,9 @@ function renderIdeas(){
   const sentRecently=i=>{
     const m=marks[i.num];
     if(!m || !m.sent || now-m.sent>=CADRAGE_SENT_MS) return false;
-    return !(i.qAt && Date.parse(i.qAt)>m.sent);
+    // Marge de 2 min : m.sent est l'horloge LOCALE, qAt celle de GitHub — sans elle, une
+    // horloge locale en avance masquerait une nouvelle question arrivée juste après l'envoi.
+    return !(i.qAt && Date.parse(i.qAt)>m.sent-120_000);
   };
   const runRecently=i=>!!(marks[i.num]&&marks[i.num].run&&now-marks[i.num].run<CADRAGE_RUN_MS);
   let list=model.ideas.slice().sort((a,b)=>order[a.p]-order[b.p]||a.num-b.num);
@@ -764,7 +798,7 @@ function renderIdeas(){
       </div>
       <div class="idea-question md">${md(qBody)}</div>
       <div class="quick-replies">
-        ${po?po.opts.map(o=>`<button class="btn qr${po.rec===o.n?" btn-primary":""}" data-iqr="${i.num}:${o.n}" title="Envoyer cette réponse">${po.rec===o.n?"⭐ ":""}${o.n}. ${esc(optLabel(o.t))}</button>`).join(""):""}
+        ${po?po.opts.map(o=>`<button class="btn qr${po.rec===o.n?" btn-primary":""}" data-iqr="${i.num}:${o.n}" title="Envoie : ${esc(o.t)}">${po.rec===o.n?"⭐ ":""}${o.n}. ${esc(optLabel(o.t))}</button>`).join(""):""}
         <button class="btn qr" data-iqr-best="${i.num}" title="Le cadrage applique sa recommandation et l'idée part au backlog">👍 Tranche toi-même</button>
       </div>
       <div class="reply">
@@ -987,10 +1021,10 @@ function renderDetail(){
     // ne jamais laisser une question sans réponse possible en un geste.
     let quick="";
     if(st && st.phase==="question"){
-      const lastClaude=[...(th.comments||[])].reverse().find(c=>c.user && c.user.login!==OWNER);
+      const lastClaude=[...(th.comments||[])].reverse().find(c=>c.user && isBotLogin(c.user.login));
       const po=lastClaude?parseOptions(lastClaude.body):null;
       quick=`<div class="quick-replies">
-        ${po?po.opts.map(o=>`<button class="btn qr${po.rec===o.n?" btn-primary":""}" data-qr="${th.num}:${o.n}" title="Envoyer cette réponse">${po.rec===o.n?"⭐ ":""}${o.n}. ${esc(optLabel(o.t))}</button>`).join(""):""}
+        ${po?po.opts.map(o=>`<button class="btn qr${po.rec===o.n?" btn-primary":""}" data-qr="${th.num}:${o.n}" title="Envoie : ${esc(o.t)}">${po.rec===o.n?"⭐ ":""}${o.n}. ${esc(optLabel(o.t))}</button>`).join(""):""}
         <button class="btn qr" data-qr-best="${th.num}" title="Claude applique sa recommandation sans autre question">👍 Fais au mieux</button>
       </div>`;
     }
@@ -1005,7 +1039,9 @@ function renderDetail(){
       ${threadBar}
       <div class="thread">${msgs.map((m,i)=>{
         const mine=m.user.login===OWNER;
-        return `<div class="msg ${mine?"":"claude"}"><span class="who">${mine?"Toi":"Claude"} <span class="msg-n">${i+1}</span></span>
+        // Un tiers (repo public) s'affiche sous son vrai login — jamais « Claude ».
+        const who=mine?"Toi":(isBotLogin(m.user.login)?"Claude":esc(m.user.login));
+        return `<div class="msg ${mine?"":"claude"}"><span class="who">${who} <span class="msg-n">${i+1}</span></span>
           <span class="bubble md">${md(String(m.body||"").replace(/^@claude\s*/i,""))}</span></div>`;
       }).join("")||`<p class="marginalia" style="margin:0">Pas encore de commentaire — la session écrit ici.</p>`}
       </div>
@@ -1162,7 +1198,7 @@ Règles de la flotte :
 - Lis MAP.md et CLAUDE.md d'abord ; n'explore que ce qu'ils ne couvrent pas.
 - Vérifie avant de conclure (script verify du repo, sinon build + tests) et dis dans la PR ce qui a été vérifié.
 - Mets à jour BACKLOG.md dans la PR.
-- Si tu dois me poser une question : UNE seule à la fois, avec un bloc « **Options :** » de 2 à 4 réponses numérotées (une ligne chacune, concrètes) puis une ligne « **Recommandation :** option N — pourquoi ». Je peux répondre par un simple numéro.
+- Si tu dois me poser une question : UNE seule à la fois, avec un bloc « **Options :** » de 2 à 4 réponses numérotées (une ligne chacune, < 140 caractères, concrètes) puis une ligne « **Recommandation :** option N — pourquoi ». Je peux répondre par un simple numéro.
 
 _Créée depuis FleetView._`;
 }
@@ -1208,8 +1244,11 @@ async function saveIdea(num){
 }
 async function removeIdea(num){
   if(demo){ toast("Mode démo — rien n'est envoyé."); return; }
-  await gh(`/repos/${OWNER}/${META}/issues/${num}/comments`,{method:"POST",body:{body:"→ retirée du codex depuis FleetView."}});
+  // Fermer AVANT de commenter : dans l'autre ordre, le déclencheur issue_comment de
+  // codex-cadrage.yml (claude-ops) voit une issue encore ouverte et relance un cadrage
+  // pour rien sur une idée qu'on vient de supprimer.
   await gh(`/repos/${OWNER}/${META}/issues/${num}`,{method:"PATCH",body:{state:"closed",state_reason:"not_planned"}});
+  await gh(`/repos/${OWNER}/${META}/issues/${num}/comments`,{method:"POST",body:{body:"→ retirée du codex depuis FleetView."}});
   ideaUI.open=null; ideaUI.edit=null;
   toast("🗑 Idée retirée du codex.");
 }
@@ -1551,6 +1590,9 @@ function readDeepLink(){
 }
 function applyPendingOpen(){
   if(!model) return;
+  // Rechargé sur l'onglet Tâches (?tab=taches) : charger les backlogs — sinon on retombe
+  // sur le texte d'accueil alors qu'on regardait la liste.
+  if(document.body.dataset.tab==="taches" && !tasks && !tasksLoading) loadTasks();
   if(pendingIdea!==null){ const n=pendingIdea; pendingIdea=null; openIdea(n); return; }
   if(!pendingOpen) return;
   const target=pendingOpen; pendingOpen=null;
@@ -1718,12 +1760,12 @@ document.addEventListener("click",async(e)=>{
     if(b.dataset.qr!==undefined && r){
       const [num,n]=b.dataset.qr.split(":").map(Number);
       const th=(r.threadIssues||[]).find(x=>x.num===num);
-      const lastClaude=th&&[...(th.comments||[])].reverse().find(c=>c.user&&c.user.login!==OWNER);
+      const lastClaude=th&&[...(th.comments||[])].reverse().find(c=>c.user&&isBotLogin(c.user.login));
       const po=lastClaude?parseOptions(lastClaude.body):null;
       const opt=po&&po.opts.find(o=>o.n===n);
       if(!opt) return;
       b.disabled=true;
-      try{ await sendComment(r.id, num, `Option ${n} : ${opt.t}`); await refresh(); }
+      try{ await sendComment(r.id, num, `Option ${n} : ${unmention(opt.t)}`); await refresh(); }
       catch(err){ toast("Échec : "+errMsg(err), 6000); b.disabled=false; }
       return;
     }
@@ -1901,7 +1943,7 @@ $("#ideas").addEventListener("click",async(e)=>{
       const opt=po&&po.opts.find(o=>o.n===n);
       if(!opt) return;
       t.disabled=true;
-      await sendIdeaReply(num, `Option ${n} : ${opt.t}`);
+      await sendIdeaReply(num, `Option ${n} : ${unmention(opt.t)}`);
       markCadrage(num,"sent"); renderIdeas(); refresh(false); // « À traiter » et badge suivent
     } else if(d.iqrBest!==undefined){
       t.disabled=true;
@@ -2007,9 +2049,31 @@ $("#demo-link").addEventListener("click",async(e)=>{
 
 /* ================= Paramètres ================= */
 const modalSettings=$("#modal-settings");
+// État du veilleur (cron du repo fleetview) : sans ce témoin, un veilleur jamais activé
+// (secrets absents) resterait invisible — on croirait être couvert app fermée.
+async function refreshVeilleurStatus(){
+  const el=$("#veilleur-status"); if(!el || demo || !store.token) return;
+  el.textContent="vérification…";
+  // Un run « vert » ne suffit pas : sans ses secrets, le script sort en 0 sans rien faire.
+  // On vérifie donc d'abord la présence des deux secrets (404 = absent, 403 = pas le droit
+  // de savoir), puis le dernier passage du cron.
+  const has=async(name)=>{ try{ await gh(`/repos/${OWNER}/fleetview/actions/secrets/${name}`); return "oui"; }
+    catch(e){ return e.status===404?"non":"?"; } };
+  try{
+    const [tok,topic]=await Promise.all([has("FLEET_GH_TOKEN"), has("NTFY_TOPIC")]);
+    if(tok==="non"||topic==="non"){
+      el.textContent="○ inactif — secret "+(tok==="non"?"FLEET_GH_TOKEN":"NTFY_TOPIC")+" manquant (voir l'issue #48 du repo fleetview)";
+      return;
+    }
+    const r=await gh(`/repos/${OWNER}/fleetview/actions/workflows/veilleur.yml/runs?per_page=1`);
+    const run=(r.workflow_runs||[])[0];
+    if(!run){ el.textContent="○ pas encore de passage — le cron tourne toutes les 15 min"; return; }
+    el.textContent=(run.conclusion==="success"?"✓ actif":"⚠ dernier passage en échec")+" · "+timeAgo(run.run_started_at||run.created_at);
+  }catch(e){ el.textContent="état inconnu ("+errMsg(e)+")"; }
+}
 $("#btn-settings").addEventListener("click",()=>{
   $("#ntfy-input").value=store.ntfy;
-  renderRate(); updateNotifStatus();
+  renderRate(); updateNotifStatus(); refreshVeilleurStatus();
   modalSettings.showModal();
 });
 $("#modal-settings-close").addEventListener("click",()=>modalSettings.close());

@@ -160,7 +160,7 @@
           <label class="radio-card"><input type="radio" name="f-when" value="direct">
             <span><b>⚡ Issue directe</b><small>Claude part tout seul et revient avec une PR à valider — pour les demandes déjà claires, sans échange</small></span></label>
           <label class="radio-card" id="opt-box"><input type="radio" name="f-when" value="box">
-            <span><b>💡 Codex</b><small>juste noter l'idée — rien ne se lance ; le 🪶 du codex l'enverra au backlog quand tu voudras</small></span></label>
+            <span><b>💡 Codex</b><small>juste noter l'idée — rien ne s'implémente ; elle sera cadrée et envoyée au backlog (chaque matin, ou tout de suite d'un 🪶)</small></span></label>
         </div>
       </div>
       <div class="field prio-row" id="f-prio-row">
@@ -265,8 +265,9 @@
       </div>
       <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
         FleetView notifie <b>directement</b> ton appareil quand une action t'attend (question de Claude,
-        PR prête, question du cadrage) ; le clic ouvre le bon endroit. Marche tant que FleetView est
-        <b>ouvert</b> (même en arrière-plan). App fermée → c'est le <b>veilleur</b> qui prend le relais (ci-dessous).
+        PR prête, question du cadrage) ; le clic ouvre le bon endroit. Marche tant que l'onglet FleetView
+        est <b>ouvert et visible</b> — onglet en arrière-plan ou app fermée, c'est le <b>veilleur</b>
+        qui prend le relais (ci-dessous).
       </p>
     </div>
     <div class="field">
@@ -283,6 +284,7 @@
         fleetview qui surveille et pousse sur ntfy toutes les 15 min (guide §7). S'il est actif, laisse ce
         champ-ci vide — sinon tu recevras tout en double.
       </p>
+      <p class="marginalia num" id="veilleur-status" style="margin:6px 0 0; font-size:12px">—</p>
     </div>
     <div class="field">
       <label>Compte GitHub</label>
