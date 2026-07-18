@@ -37,7 +37,7 @@ scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après
 | Questions à options (boutons) | `app.js:parseOptions()` + handlers `data-qr`/`data-iqr` | Convention `**Options :**`+`**Recommandation :** option N` → boutons de réponse en un clic |
 | « Que faire ? » / statuts de fil | `app.js:buildModel()` (tableaux `next`, `status` par fil) | La boîte en tête de vue projet + l'en-tête de chaque Dialogue |
 | Codex : question du cadrage | `app.js:renderIdeas()` (groupes ask/busy) + `sendIdeaReply()` | Question affichée sur place, réponse SANS @claude (relance auto côté claude-ops) |
-| Veilleur (notifs app fermée) | `scripts/veilleur.mjs` + `.github/workflows/veilleur.yml` | Cron 15 min, sans état (fenêtre 20 min), secrets `FLEET_GH_TOKEN`+`NTFY_TOPIC` |
+| Veilleur (notifs app fermée) | `scripts/veilleur.mjs` + `.github/workflows/veilleur.yml` | Cron 15 min ; fenêtre = depuis le précédent run terminé (repli 20 min), secrets `FLEET_GH_TOKEN`+`NTFY_TOPIC` |
 | Journal de run | `app.js:renderJournalInto()` + `styles.css .log` | Actualisation ~4,5s pendant run, lien vers logs bruts |
 | Changer l'icône | `icon.svg` puis `node scripts/icons.mjs` | Édite SVG, régénère PNG (192, 512, maskable, apple) |
 
