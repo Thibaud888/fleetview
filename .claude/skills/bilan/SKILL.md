@@ -32,5 +32,5 @@ handoff éventuel (chemin + texte à coller).
 
 ## Rappel des conventions (socle Thibaud)
 - Repos projet : branche + PR, jamais de push direct sur `main`.
-- Exception : le repo méta `claude-ops` (commits directs sur `main`).
+- Exceptions : les repos méta `claude-ops` et `fleet-kit` (commits directs sur `main`).
 - Langue : français. Messages de commit en français.
