@@ -178,11 +178,16 @@ C'est le cœur de FleetView : deux canaux, selon que le geste demande de l'intel
 Tu décris **quoi**, le système s'occupe du **comment**. Trois parcours, dans la modale « Demande » :
 
 - **🌩 Session cloud (recommandé pour cadrer)** — ouvre une **session interactive claude.ai/code**.
-  FleetView compose un prompt de cadrage complet (repo ciblé, tâche, règles de la flotte), le
-  **copie** et ouvre claude.ai/code ; tu colles, et tu **discutes** avec Claude comme dans l'app
-  desktop — questions/réponses, précisions, allers-retours — jusqu'à la PR. Suivable depuis le
-  téléphone, reprenable dans l'app desktop, sur ton abonnement. Le bouton **🌩** est aussi présent
-  directement sur chaque **carte repo** et chaque **tâche** de la vue Tâches.
+  FleetView crée d'abord une **issue d'ancrage** (labellisée `cloud`, titre = la tâche), puis
+  compose un prompt **court** — 1re ligne « `<repo> — <tâche>` », qui devient le titre de session
+  dans claude.ai — et te propose « **Copier et ouvrir** » ; tu colles, et tu **discutes** avec
+  Claude comme dans l'app desktop, jusqu'à la PR. Suivable depuis le téléphone, reprenable dans
+  l'app desktop, sur ton abonnement. Le bouton **🌩** est aussi présent directement sur chaque
+  **carte repo** et chaque **tâche** de la vue Tâches.
+  L'ancrage est ce qui rend la session **visible** : le projet passe « en session » dans l'atelier,
+  l'anti-collision la voit, et l'issue se ferme toute seule au merge (le prompt demande
+  `Closes #N`). Depuis une **carte** (aucune tâche nommée), il n'y a rien à ancrer : la session
+  s'ouvre directement, comme avant, pour que tu dictes la tâche sur place.
 - **⚡ Issue directe (fire-and-forget)** — pour une demande déjà limpide : l'issue `claude` part
   telle quelle, une **session GitHub Actions** démarre seule, machine éteinte, et la PR revient
   dans l'interface. **Le modèle** est au choix : **Sonnet** (défaut), **Haiku** (mécanique, éco),
@@ -216,11 +221,13 @@ liste, deux surfaces.
 ### Le cycle complet d'une demande
 ```
 Session cloud (interactif) :
-   Toi : 🌩 sur un repo / une tâche ─▶ prompt de cadrage copié, claude.ai/code s'ouvre
-     │
+   Toi : 🌩 sur une tâche ─▶ issue d'ancrage `cloud` créée, prompt court copié, claude.ai/code s'ouvre
+     │                        (le projet passe « en session » dans l'atelier)
    Toi ⇄ Claude : vous cadrez et discutez dans la session (mobile ou desktop)
      │
-   Claude : branche, vérifie, ouvre la PR ─▶ elle apparaît dans la vue projet FleetView
+   Claude : branche, vérifie, ouvre la PR (`Closes #N`) ─▶ le projet passe « à décider »
+     │
+   Toi : tu merges ─▶ l'issue d'ancrage se ferme toute seule
 
 Issue directe (fire-and-forget) :
    Toi : ⚡ "améliore X" ─▶ issue claude ─▶ session Actions ─▶ PR ─▶ ✓ Merger
@@ -364,7 +371,7 @@ Trois fichiers, aucune dépendance JS, aucun build.
 | Changer le calcul d'un état | `buildModel()` dans `app.js` |
 | Ajouter/modifier une action | le `switch(b.dataset.act)` du gestionnaire de clic + la fonction d'écriture concernée (`createRequest()`, `mergePr()`, `setLifecycle()`, `rerunRun()`…) |
 | Nouveau thème | un bloc `html[data-fv-theme="nom"]{ … }` dans `styles.css` + une `<option>` |
-| Lanceur de session cloud | `composeCloudPrompt()` + `launchCloud()` — compose le prompt, le copie, ouvre claude.ai/code |
+| Lanceur de session cloud | `createCloudIssue()` (ancrage, label `cloud` seul) + `composeCloudPrompt()` + `launchCloudAnchored()` — crée l'issue, compose le prompt court, relaie par la modale « Copier et ouvrir » |
 | Issue directe (Actions) | `createRequest()` + `directBody()` + le déclencheur `@claude` du workflow du kit |
 | Questions à options (boutons) | `parseOptions()` (convention `**Options :**` + `**Recommandation :**`) + les handlers `data-qr`/`data-iqr` |
 | Veilleur (notifs app fermée) | `scripts/veilleur.mjs` + `.github/workflows/veilleur.yml` (cron 15 min, secrets `FLEET_GH_TOKEN` + `NTFY_TOPIC`) |

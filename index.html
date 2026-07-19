@@ -306,13 +306,13 @@
     <button type="button" class="btn btn-icon" id="modal-cloud-close" aria-label="Fermer">✕</button>
   </div>
   <div class="modal-body">
-    <p class="marginalia" style="margin:0 0 8px">La copie automatique n'a pas abouti. Sélectionne tout (le champ est déjà surligné) et copie
+    <p class="marginalia" style="margin:0 0 8px" id="cloud-prompt-note">La copie automatique n'a pas abouti. Sélectionne tout (le champ est déjà surligné) et copie
       — <b>Ctrl/Cmd+C</b> ou appui long sur mobile — puis colle-le dans la session.</p>
-    <textarea id="cloud-prompt-text" readonly rows="12" style="width:100%; font-family:var(--font-mono); font-size:12.5px" aria-label="Prompt à copier"></textarea>
+    <textarea id="cloud-prompt-text" readonly rows="8" style="width:100%; font-family:var(--font-mono); font-size:12.5px" aria-label="Prompt à copier"></textarea>
   </div>
   <div class="modal-foot">
     <span class="poc-note"></span>
-    <a class="btn btn-primary" href="https://claude.ai/code" target="_blank" rel="noopener">Ouvrir claude.ai/code ↗</a>
+    <a class="btn btn-primary" id="cloud-open" href="https://claude.ai/code" target="_blank" rel="noopener">Copier et ouvrir ↗</a>
   </div>
 </dialog>
 

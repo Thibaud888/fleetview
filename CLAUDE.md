@@ -34,11 +34,17 @@
   d'URL ntfy ou de contenu privé de la flotte — tout vient de l'API à l'exécution.
 - Les labels (`claude`, `claude:opus`…, `idée`, `P1-P3`) sont créés à la volée par
   `ensureLabel()` ; ne pas supposer qu'ils existent.
-- Deux canaux de lancement, distincts : **session cloud** (`composeCloudPrompt()`+`launchCloud()`
-  → compose un prompt, le copie, ouvre claude.ai/code ; interactif, sur l'abonnement — pas d'API
-  publique pour pré-remplir une session, le geste est copier→coller) et **issue directe**
+- Deux canaux de lancement, distincts : **session cloud** (`createCloudIssue()`+
+  `composeCloudPrompt()`+`launchCloudAnchored()` → ancre la tâche en issue `cloud`, compose un
+  prompt court, relaie par la modale « Copier et ouvrir » ; interactif, sur l'abonnement — pas
+  d'API publique pour pré-remplir une session, le geste est copier→coller) et **issue directe**
   (`createRequest()`+`directBody()` → issue `claude`, déclencheur `@claude` du kit, session
   Actions → PR). Le protocole cadrage 2 phases (label `cadrage`, « GO ») a été **retiré** — ne pas
   le réintroduire ; l'interactif passe désormais par la session cloud.
+- **Ne jamais poser `claude` sur une issue d'ancrage cloud** : `fleet-kit/dispatch.yml` déclenche
+  sur ce label, ce qui lancerait une session Actions en doublon de la session interactive. Le
+  label est `cloud` seul (`CLOUD_LABEL`), et `loadAll()` cherche `label:claude,cloud` (OU) pour
+  voir les deux canaux. Le prompt cloud reste **court** : les règles de travail sont ici, dans ce
+  fichier — les recopier dans le prompt, c'est les faire diverger.
 - `fleet.json` est aussi écrit par `scripts/fleet.mjs` (claude-ops) : ne toucher que le champ
   `statut`, préserver le reste, et gérer le conflit de `sha` (re-fetch avant PUT).

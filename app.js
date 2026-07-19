@@ -7,6 +7,10 @@
 const OWNER = "Thibaud888";
 const META  = "claude-ops";               // repo méta : fleet.json + codex des idées
 const FLEET_PATH = "fleet/fleet.json";
+// Ancrage des sessions cloud. Ce label est SEUL sur l'issue : y ajouter `claude` déclencherait
+// une session Actions (garde de fleet-kit/dispatch.yml sur `label.name == 'claude'`), soit deux
+// sessions concurrentes sur le même travail. Ne jamais le coupler à `claude`.
+const CLOUD_LABEL = "cloud";
 const REFRESH_MS = 120_000;
 
 const store = {
@@ -58,7 +62,8 @@ const secretCache = new Map(); // repo → "present" | "absent" | "unknown" (sec
 let tasks=null;                // items `- [ ]` des BACKLOG.md de la flotte (null = pas encore lus)
 let tasksLoading=false, tasksAt=null;
 let tasksCodexOnly=false;      // filtre 📱 : seulement les tâches promues depuis le codex
-let claudeOpenRepos=new Set(); // repos avec une issue `claude` ouverte (badge + garde anti-collision)
+let claudeOpenRepos=new Set(); // repos avec un fil ouvert (`claude` OU `cloud`) : badge + anti-collision
+let cloudPromptText="";        // prompt affiché dans modal-cloud, relu par « Copier et ouvrir »
 
 /* ================= Utilitaires ================= */
 const $ = (s)=>document.querySelector(s);
@@ -297,12 +302,17 @@ async function loadAll(){
   const fleet = fleetFile.json.repos||[];
 
   // 2. Recherches globales (3 requêtes)
+  // `label:claude,cloud` = OU (syntaxe de recherche GitHub) : les DEUX canaux dans une seule
+  // requête. Une issue d'ancrage cloud ne porte JAMAIS `claude` (ça lancerait une session
+  // Actions en doublon, cf. la garde de fleet-kit/dispatch.yml) — d'où l'élargissement ici.
   const [issuesRes, prsRes, ideasRes] = await Promise.all([
-    gh(`/search/issues?q=${enc(`user:${OWNER} is:issue is:open label:claude`)}&per_page=50`),
+    gh(`/search/issues?q=${enc(`user:${OWNER} is:issue is:open label:claude,cloud`)}&per_page=50`),
     gh(`/search/issues?q=${enc(`user:${OWNER} is:pr is:open`)}&per_page=50`),
     gh(`/repos/${OWNER}/${META}/issues?labels=${enc("idée")}&state=open&per_page=100`),
   ]);
-  const claudeIssues = (issuesRes.items||[]).map(it=>({...it, repo: it.repository_url.split("/").pop()}));
+  const claudeIssues = (issuesRes.items||[]).map(it=>({...it, repo: it.repository_url.split("/").pop(),
+    cloud: (it.labels||[]).some(l=>l.name===CLOUD_LABEL)}));
+  // Anti-collision : un repo est « occupé » dès qu'un fil est ouvert sur l'UN OU L'AUTRE canal.
   claudeOpenRepos = new Set(claudeIssues.map(i=>i.repo));
   const openPRs = (prsRes.items||[]).map(it=>({...it, repo: it.repository_url.split("/").pop()}));
 
@@ -400,7 +410,22 @@ function buildModel(fleet, D){
       const lastFromClaude = lastC && lastC.user && isBotLogin(lastC.user.login);
       const asksQuestion = lastFromClaude && (!!parseOptions(lastC.body) || endsWithQuestion(lastC.body));
       let status;
-      if(linkedPR){
+      if(is.cloud){
+        // Canal cloud : le dialogue vit dans claude.ai, PAS sur l'issue — qui n'est là que pour
+        // ancrer la tâche (visibilité atelier + anti-collision). Donc aucun signal d'activité
+        // à attendre ici : ni run Actions, ni commentaire. La règle « muette après 2 h » ne
+        // s'applique pas (une session interactive dort la nuit sans être plantée) ; seule
+        // l'ouverture de la PR fait avancer l'état, et le merge ferme l'issue via « Closes #N ».
+        if(linkedPR){
+          status={phase:"pr", c:"warn", label:"PR ouverte",
+            hint:`La session cloud a ouvert la PR #${linkedPR.number} — la décision se prend dans le bloc Pull request.`};
+        } else {
+          bump("info");
+          status={phase:"session", c:"info", label:"session cloud",
+            hint:"Session interactive en cours dans claude.ai — le dialogue s'y passe, pas ici. L'issue se fermera toute seule au merge de la PR."};
+          lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — 🌩 session cloud en cours`, small:timeAgo(is.created_at), act:{id:"gh-issue", n:is.number, label:"Voir l'issue"}});
+        }
+      } else if(linkedPR){
         // La PR parle pour elle (état et lignes traités plus bas) — mais le fil reste
         // visible : l'issue est encore ouverte, on peut vouloir y répondre.
         status={phase:"pr", c:"warn", label:"PR ouverte",
@@ -1403,7 +1428,7 @@ function renderTasks(){
     for(const i of byRepo[repo]){
       const t=tasks[i];
       const zap = !t.equipped ? `<button class="idea-launch" disabled title="Repo non équipé du kit — passe /equiper d'abord">⚡</button>`
-        : busy ? `<button class="idea-launch" disabled title="Issue claude déjà ouverte sur ce repo — 1 session à la fois (anti-collision)">⚡</button>`
+        : busy ? `<button class="idea-launch" disabled title="Un fil est déjà ouvert sur ce repo (session Actions ⚡ ou cloud 🌩) — 1 session à la fois (anti-collision)">⚡</button>`
         : `<button class="idea-launch" data-task-direct="${i}" title="Lancer en issue directe (session Actions)">⚡</button>`;
       html+=`<div class="task">
         <span class="task-body">${esc(t.title)}${t.codex?` <span title="Promue depuis le codex">📱</span>`:""}${t.desc?`<span class="task-desc">${esc(t.desc.length>200?t.desc.slice(0,200)+"…":t.desc)}</span>`:""}</span>
@@ -1420,30 +1445,39 @@ function renderTasks(){
 // conversation continue, suivable sur mobile, reprenable dans l'app desktop, sur l'abonnement.
 // Aucune API publique ne permet de pré-remplir une session : on compose le prompt, on le copie,
 // et on ouvre claude.ai/code — le geste assumé est copier → coller.
-function composeCloudPrompt({repo, title, desc}){
+// Prompt COURT (2-3 lignes). Les règles de flotte ne sont plus recopiées : elles vivent dans le
+// `CLAUDE.md` du repo équipé, que la 1re ligne demande de lire. La 1re ligne fait aussi le titre
+// de session dans claude.ai — d'où la forme « <repo> — <tâche> », scannable dans la liste.
+function composeCloudPrompt({repo, title, desc, issue}){
   const target = repo==="flotte" ? META : repo;
-  // Sans tâche fournie (🌩 depuis une carte ou la vue projet) : donner au moins l'état du
-  // repo — le prompt « (à préciser) » nu obligeait à tout re-raconter dans la session.
-  let tache;
-  if(title){
-    tache=`## Tâche\n${title}${desc?`\n\n${desc}`:""}`;
-  } else {
+  // Sans tâche fournie (🌩 depuis une carte ou la vue projet) : pas d'ancrage possible (aucun
+  // titre à donner à l'issue) — on ouvre une session de cadrage, l'état du repo pour situer.
+  if(!title){
     const r=model&&model.repos.find(x=>x.id===repo);
     const ctx=r?r.lines.filter(l=>l.c!=="ok").map(l=>`- ${l.t}`).join("\n"):"";
-    tache=`## Tâche\nJe te la donne au premier message de la session — commence par me demander sur quoi on travaille.${ctx?`\n\nPour situer, où en est le repo :\n${ctx}`:""}`;
+    return `${target} — sur quoi on travaille ?
+
+Lis \`MAP.md\` puis \`CLAUDE.md\` de \`${OWNER}/${target}\` (les règles de travail y sont), puis demande-moi la tâche avant de coder.${ctx?`\n\nOù en est le repo :\n${ctx}`:""}`;
   }
-  return `Travaille sur le repo GitHub **${OWNER}/${target}**.
+  return `${target} — ${title}
 
-${tache}
+Lis \`MAP.md\` puis \`CLAUDE.md\` de \`${OWNER}/${target}\` (les règles de travail y sont). Reformule la tâche en spécification courte et fais-la-moi valider avant de coder.${issue?`\nOuvre la PR avec \`Closes #${issue}\` dans son corps (elle est ancrée à l'issue #${issue}).`:""}${desc?`\n\n${desc}`:""}`;
+}
+// Issue d'ancrage : rend la session cloud visible dans l'atelier (« en session ») et la fait
+// compter dans l'anti-collision — sans quoi une tâche lancée du téléphone n'existait nulle part
+// côté GitHub. Label `cloud` SEUL, jamais `claude` (cf. CLOUD_LABEL).
+async function createCloudIssue({repo, title, desc}){
+  const target = repo==="flotte" ? META : repo;
+  await ensureLabel(target, CLOUD_LABEL, "0E7490", "Session cloud interactive (claude.ai/code) en cours");
+  const body = `${desc||title}
 
-## Méthode
-- Commence par reformuler la tâche en spécification courte — objectif, critères de fin vérifiables, ce qui est hors périmètre — et fais-la-moi valider AVANT de coder. Pose tes questions à ce moment-là, pas en cours de route.
+---
+🌩 Session **cloud interactive** — le dialogue se passe dans claude.ai/code, pas ici.
+Cette issue sert d'ancrage : elle rend la session visible dans FleetView et se ferme au merge
+de la PR (\`Closes #N\`).
 
-## Règles de la flotte
-- Lis \`MAP.md\` puis \`CLAUDE.md\` du repo d'abord ; n'explore que ce qu'ils ne couvrent pas.
-- Travaille sur une branche dédiée \`claude/<slug>\`, jamais directement sur la branche par défaut.
-- Vérifie avant de conclure : lance le script verify du repo (souvent \`node scripts/verify.mjs\`) ou build + tests, et regarde le résultat tourner.
-- Ouvre la PR toi-même avec \`gh pr create\` (titre et corps en français) ; mets à jour \`BACKLOG.md\` dans la même PR.`;
+_Créée depuis FleetView._`;
+  return gh(`/repos/${OWNER}/${target}/issues`,{method:"POST",body:{title,body,labels:[CLOUD_LABEL]}});
 }
 // Copie synchrone (dans le geste de clic, sans dépendre du focus ni d'un contexte sécurisé) :
 // la voie la plus fiable sur mobile et en http. L'API Clipboard moderne sert de filet.
@@ -1459,12 +1493,41 @@ function copyViaTextarea(text){
     return ok;
   }catch(e){ return false; }
 }
-function showCloudPrompt(text){
-  const dlg=$("#modal-cloud"), ta=$("#cloud-prompt-text");
-  if(dlg && ta){ ta.value=text; dlg.showModal(); setTimeout(()=>{ ta.focus(); ta.select(); }, 50); }
+// `note` adapte le texte : la modale sert désormais DEUX cas — le relais normal du parcours
+// ancré (on y arrive toujours) et le repli historique « la copie automatique a échoué ».
+function showCloudPrompt(text, note){
+  const dlg=$("#modal-cloud"), ta=$("#cloud-prompt-text"), n=$("#cloud-prompt-note");
+  cloudPromptText=text;                                        // relu par le bouton « Copier et ouvrir »
+  if(dlg && ta){
+    ta.value=text;
+    if(n) n.innerHTML = note || `La copie automatique n'a pas abouti. Sélectionne tout (le champ est déjà surligné) et copie
+      — <b>Ctrl/Cmd+C</b> ou appui long sur mobile — puis colle-le dans la session.`;
+    dlg.showModal(); setTimeout(()=>{ ta.focus(); ta.select(); }, 50);
+  }
   else { try{ window.prompt("Copie ce prompt, puis colle-le dans claude.ai/code :", text); }catch(e){} }
 }
+// Parcours ANCRÉ (une tâche est connue) : créer l'issue impose un aller-retour API, ce qui tue
+// la copie synchrone dans le geste de tap. On relaie donc par la modale : son bouton
+// « Copier et ouvrir » est un vrai <a> tapé — copie synchrone ET universal link mobile préservés.
+async function launchCloudAnchored(ctx){
+  let issue=null;
+  if(!demo){
+    try{ issue=await createCloudIssue(ctx); }
+    catch(err){ toast("Ancrage impossible ("+errMsg(err)+") — la session s'ouvre sans issue.", 6000); }
+  }
+  const text=composeCloudPrompt({...ctx, issue:issue&&issue.number});
+  showCloudPrompt(text, demo
+    ? `Mode démo — aucune issue n'est créée. Voici le prompt qui serait copié.`
+    : issue
+      ? `Issue d'ancrage <b>#${issue.number}</b> créée — le projet apparaît « en session » dans l'atelier.
+         Touche <b>Copier et ouvrir</b> : le prompt part au presse-papier et la session s'ouvre, il n'y a plus qu'à coller.`
+      : `Touche <b>Copier et ouvrir</b> : le prompt part au presse-papier et la session s'ouvre, il n'y a plus qu'à coller.`);
+  if(issue) refresh(false).catch(()=>{});                      // l'atelier reflète l'ancrage tout de suite
+}
+// Parcours NON ancré (🌩 d'une carte : aucune tâche, donc aucun titre à donner à une issue) :
+// rien à créer, on garde le geste direct en un tap.
 function launchCloud(ctx){
+  if(ctx.title) return void launchCloudAnchored(ctx);
   const text=composeCloudPrompt(ctx);
   if(demo){ // en démo : on montre le prompt composé, sans ouvrir d'onglet externe ni copier en douce
     showCloudPrompt(text);
@@ -1490,6 +1553,9 @@ function launchCloud(ctx){
 // que le navigateur. On copie le prompt DANS le geste, puis on LAISSE le lien s'ouvrir
 // (ni preventDefault, ni window.open : pas de double ouverture).
 function launchCloudFromLink(e, ctx){
+  // Tâche connue → parcours ancré : la création de l'issue est asynchrone, le lien ne peut donc
+  // pas s'ouvrir dans ce geste-ci. On le retient ; la modale rendra un vrai <a> à taper.
+  if(ctx.title){ e.preventDefault(); launchCloudAnchored(ctx); return; }
   const text=composeCloudPrompt(ctx);
   if(demo){ // démo : on n'ouvre pas d'onglet externe, on montre le prompt composé
     e.preventDefault(); showCloudPrompt(text);
@@ -2078,6 +2144,16 @@ $("#btn-settings").addEventListener("click",()=>{
 });
 $("#modal-settings-close").addEventListener("click",()=>modalSettings.close());
 $("#modal-cloud-close").addEventListener("click",()=>$("#modal-cloud").close());
+// « Copier et ouvrir » : la copie se fait DANS le geste de tap, puis on laisse le lien s'ouvrir
+// (ni preventDefault ni window.open — c'est ce qui déclenche l'app Claude sur mobile).
+// En démo on retient le lien : rien ne doit partir vers l'extérieur.
+$("#cloud-open").addEventListener("click",(e)=>{
+  if(demo){ e.preventDefault(); toast("Mode démo — la session ne s'ouvre pas pour de vrai.", 4000); return; }
+  if(!copyViaTextarea(cloudPromptText) && navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(cloudPromptText).catch(()=>{});
+  $("#modal-cloud").close();
+  toast("🌩 Prompt copié — colle-le (Ctrl/Cmd+V) dans la session qui s'ouvre.", 7000);
+});
 // Notifications natives (API Notification du navigateur — sans service tiers)
 function updateNotifStatus(){
   const el=$("#notif-status"); if(!el) return;
