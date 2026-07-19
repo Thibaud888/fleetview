@@ -53,7 +53,7 @@ Fais, dans l'ordre :
 2. <étape>
 …
 
-Contraintes : <français ; branche + PR si repo projet ; budget < 50 €/mois>.
+Contraintes : <français ; branche + PR si repo projet>.
 Definition of done : <critères vérifiables>.
 Termine en mettant à jour le `BACKLOG.md` (statut + lien PR).
 ````
