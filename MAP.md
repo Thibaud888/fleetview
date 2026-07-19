@@ -32,7 +32,7 @@ scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après
 | Nouveau thème | `styles.css` | Ajouter `html[data-fv-theme="nom"]` + vars CSS |
 | Modifier l'API GitHub | `app.js:gh()` | Fonction wrapper (headers, retry, erreurs, quota) |
 | Notifications ntfy | `app.js:publishNtfy()` + index.html settings | Sujet localStorage, handlers cliquables, testable |
-| Lanceur session cloud | `app.js:composeCloudPrompt()`/`launchCloud()` | Compose un prompt (spec d'abord ; contexte du repo si pas de tâche), le copie, ouvre claude.ai/code |
+| Lanceur session cloud | `app.js:composeCloudPrompt()`/`createCloudIssue()`/`launchCloudAnchored()` | Ancre la tâche en issue `cloud`, compose un prompt court (1re ligne `<repo> — <tâche>` = titre de session), relaie par la modale « Copier et ouvrir » |
 | Issue directe (Actions) | `app.js:createRequest()`/`directBody()` | Crée l'issue `claude` (fire-and-forget), déclencheur `@claude` du kit ; le corps impose la convention question→Options |
 | Questions à options (boutons) | `app.js:parseOptions()` + handlers `data-qr`/`data-iqr` | Convention `**Options :**`+`**Recommandation :** option N` → boutons de réponse en un clic |
 | « Que faire ? » / statuts de fil | `app.js:buildModel()` (tableaux `next`, `status` par fil) | La boîte en tête de vue projet + l'en-tête de chaque Dialogue |
@@ -62,7 +62,9 @@ node scripts/verify.mjs          # Test : serveur HTTP natif, vérifie réponse
 
 - **Public repo** : GitHub Pages (gratuit) → ne JAMAIS commiter token, URL ntfy, data privée. Tout vient de l'API à l'exécution.
 - **Labels dynamiques** : `ensureLabel()` crée labels à la volée (`claude`, `idée`, `P1-P3`, etc.) — ne pas supposer leur existence.
-- **Deux canaux de lancement** : session **cloud** (interactif, claude.ai/code — prompt composé, copié, ouvert ; pas d'API pour pré-remplir, geste copier→coller) et **issue directe** (fire-and-forget, session Actions → PR). Le protocole cadrage 2 phases (label `cadrage`, « GO ») a été retiré — ne pas le réintroduire.
+- **Deux canaux de lancement** : session **cloud** (interactif, claude.ai/code — issue d'ancrage `cloud`, prompt court composé, copié, ouvert ; pas d'API pour pré-remplir, geste copier→coller) et **issue directe** (fire-and-forget, issue `claude`, session Actions → PR). Le protocole cadrage 2 phases (label `cadrage`, « GO ») a été retiré — ne pas le réintroduire.
+- **Une issue d'ancrage cloud ne porte JAMAIS le label `claude`** : la garde de `fleet-kit/dispatch.yml` déclenche sur `label.name == 'claude'`, donc une session Actions partirait en doublon de la session cloud. Label `cloud` seul (constante `CLOUD_LABEL`) ; c'est pourquoi la recherche de `loadAll()` est `label:claude,cloud` (OU) et non `label:claude`.
+- **Le fil d'une issue `cloud` est vide par construction** : le dialogue vit dans claude.ai. Donc aucun signal d'activité à attendre côté GitHub — `buildModel()` la classe « en session » et la règle « muette après 2 h » ne s'y applique pas (sinon toute session interactive virait « à débloquer » pendant la nuit).
 - **fleet.json dual-write** : aussi écrit par `scripts/fleet.mjs` (claude-ops) — modifier UNIQuement `statut`, préserver reste, gérer conflit `sha` (re-fetch avant PUT).
 - **Notifications ntfy** : sujet localStorage, jamais commité. Handlers cliquables passent `?repo=<id>` (ou `?idea=<n>`) et ouvrent le bon endroit. Test via bouton Tester. App fermée = rôle du **veilleur** (cron `veilleur.yml`, inactif sans ses 2 secrets).
 - **Réponse à une idée du codex : JAMAIS de préfixe `@claude`** (ça déclencherait `claude.yml` sur claude-ops) — `sendIdeaReply()` poste un commentaire nu ; la relance du cadrage est automatique (déclencheur `issue_comment` de `codex-cadrage.yml` côté claude-ops).
