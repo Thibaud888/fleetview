@@ -207,10 +207,11 @@ locale avec la skill **`/backlog`** (vue agrégée de toute la flotte), `/backlo
 (l'envoyer en issue). FleetView et `/backlog` lisent les **mêmes `BACKLOG.md`** : une seule
 liste, deux surfaces.
 
-> 💰 **Sur une issue directe : 1 commentaire = 1 lot.** Chaque réponse `@claude` relance une
-> **session Actions complète** (re-clone du repo + relecture de tout le fil), payée à chaque
-> réplique. Pour de la discussion, préfère la **session cloud** ; sur une issue Actions, groupe
-> tes remarques en **un seul commentaire**.
+> 💰 **Sur une issue directe : 1 commentaire = 1 lot** — pour les **retours de relecture** :
+> chaque commentaire `@claude` relance une session Actions complète (re-clone + relecture du
+> fil), donc groupe tes remarques. En revanche, **répondre à une question posée par la session**
+> (boutons d'options du fil) est le fonctionnement normal — un clic, une relance, aucun scrupule
+> à avoir. Pour de la vraie discussion, préfère la **session cloud** (🌩).
 
 ### Le cycle complet d'une demande
 ```
@@ -259,7 +260,9 @@ des PRs », et rafraîchir le registre (`node scripts/fleet.mjs` sur claude-ops)
 
 ## 7. Notifications
 
-Trois étages, du plus simple au plus complet :
+Trois étages, du plus simple au plus complet. **Le canal recommandé est le veilleur (étage 3)**
+— app fermée, toute la flotte, gratuit ; les étages 1 et 2 deviennent superflus (et redondants)
+quand il est actif :
 
 1. **Notifications de l'appareil** (⚙ → « Activer sur cet appareil ») — FleetView notifie
    directement quand une action t'attend : question de Claude, PR prête, question du cadrage.
@@ -323,8 +326,9 @@ d'onglets basse. Le token se saisit une fois par appareil.
 
 - **Interface : 0 €.** GitHub Pages (gratuit) + API GitHub. Un relevé consomme ~25 requêtes
   sur une limite de 5 000/h — très large. Les *gestes simples* ne coûtent rien.
-- Les **sessions lancées** consomment le budget API Claude existant de la flotte (plafonné
-  ~5 €/mois), exactement comme via `/dispatch`.
+- Les **sessions lancées** (🌩 comme ⚡) tournent sur ton **abonnement Claude** (token OAuth),
+  exactement comme via `/dispatch` — pas de crédits API. Ce qu'elles consomment, c'est la
+  limite d'usage de l'abonnement, d'où le routage de modèles (Haiku pour le mécanique).
 - **Rate limit** : si tu dépasses (peu probable), le relevé échoue proprement avec un bandeau
   et réessaie au cycle suivant. Le relevé auto tourne toutes les 2 min quand l'onglet est ouvert.
 - **Hors-ligne** : le service worker (`sw.js`) pré-cache la coquille (HTML/CSS/JS/icônes) et
@@ -366,11 +370,8 @@ Trois fichiers, aucune dépendance JS, aucun build.
 | Veilleur (notifs app fermée) | `scripts/veilleur.mjs` + `.github/workflows/veilleur.yml` (cron 15 min, secrets `FLEET_GH_TOKEN` + `NTFY_TOPIC`) |
 | État d'URL (?repo/?tab/?idea) | `syncUrl()` + `readDeepLink()` — recharger laisse sur place, les notifs pointent au bon endroit |
 
-**Pièges** (voir aussi le haut de `MAP.md` et `CLAUDE.md`) :
-- Les labels sont créés à la volée par `ensureLabel()` — ne pas supposer qu'ils existent.
-- `fleet.json` est aussi écrit par `scripts/fleet.mjs` (claude-ops) : ne modifier **que** le
-  champ `statut`, préserver le reste, et re-`fetch` le `sha` juste avant le `PUT` (anti-conflit).
-- Le repo est destiné au **public** : rien de sensible en dur.
+**Pièges** : la liste de référence vit dans [`CLAUDE.md`](../CLAUDE.md) (et la carte `MAP.md`) —
+un seul domicile, pas de copie ici qui finirait par diverger.
 
 ---
 
