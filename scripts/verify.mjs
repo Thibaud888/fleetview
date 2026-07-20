@@ -100,6 +100,57 @@ async function checkCloudPrompt() {
   return null;
 }
 
+// Contrat du découpage BACKLOG.md → tâches. Extrait de la source comme ci-dessus (app.js est une
+// IIFE fermée). Ce qui est verrouillé : la version cadrée d'une tâche (le développé après le
+// tiret, ou le corps entier à défaut de tiret) atterrit TOUJOURS dans title+desc — sinon le
+// prompt de session cloud repart « éclaté », sans le contexte spécifique de la tâche.
+async function checkParseBacklog() {
+  const src = await readFile(join(ROOT, "app.js"), "utf8");
+  const start = src.indexOf("function parseBacklog(");
+  if (start === -1) return "parseBacklog() introuvable dans app.js";
+  const bodyStart = src.indexOf("{", src.indexOf(")", start));
+  let depth = 0, end = -1;
+  for (let i = bodyStart; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}" && --depth === 0) { end = i + 1; break; }
+  }
+  if (end === -1) return "parseBacklog() : accolades non appariées";
+
+  let parse;
+  try {
+    parse = new Function(`${src.slice(start, end)}; return parseBacklog;`)();
+  } catch (e) { return `parseBacklog() ne s'évalue pas : ${e.message}`; }
+
+  // Tâche cadrée avec tiret cadratin : titre court + développé complet séparés.
+  const [a] = parse("- [ ] Faire X — DoD : X marche et verify passe.");
+  if (a.title !== "Faire X" || !a.desc.includes("DoD : X marche"))
+    return `séparateur « — » : titre/développé mal coupés (${JSON.stringify(a)})`;
+
+  // Tâche cadrée SANS tiret et trop longue pour tenir en titre : le développé NE DOIT PAS être
+  // perdu — c'était le bug (le corps passait à la trappe, le prompt sortait sans contexte).
+  const long = "Ajouter un mode révision espacé : rejouer les capitales déjà vues selon un "
+    + "intervalle croissant (1j, 3j, 7j), stocker la progression en localStorage. DoD : verify passe.";
+  const [b] = parse(`- [ ] ${long}`);
+  if (!b.desc || !b.desc.includes("DoD : verify passe"))
+    return "tâche longue sans tiret : le développé est perdu (prompt cloud sans contexte)";
+  if (b.title.length > 130) return "tâche longue sans tiret : le titre n'est pas resserré";
+
+  // Développé sur des sous-lignes indentées : agrégé, pas jeté.
+  const [c] = parse("- [ ] Refonte du codex\n  - DoD : les idées se rangent par priorité\n  - Contexte : suite audit UX");
+  if (!c.desc.includes("les idées se rangent") || !c.desc.includes("Contexte"))
+    return "développé multi-ligne (sous-puces) non agrégé";
+
+  // 📱 = promue du codex : drapeau posé, marqueur retiré du texte.
+  const [d] = parse("- [ ] Miniatures auto — DoD : 3 shorts. 📱");
+  if (!d.codex || /📱/u.test(d.title + d.desc))
+    return "marqueur 📱 : drapeau codex non posé ou marqueur laissé dans le texte";
+
+  // Seuls les items ouverts comptent (les `- [x]` cochés sont hors backlog vivant).
+  if (parse("- [x] Déjà fait — rien à lancer").length !== 0)
+    return "un item coché `- [x]` ne doit pas remonter comme tâche ouverte";
+  return null;
+}
+
 server.listen(PORT, async () => {
   try {
     const res = await fetch(`http://localhost:${PORT}/`);
@@ -108,6 +159,8 @@ server.listen(PORT, async () => {
     if (!html.toLowerCase().includes("<html")) return fail("la réponse ne ressemble pas à du HTML");
     const bad = await checkCloudPrompt();
     if (bad) return fail(`prompt de session cloud — ${bad}`);
+    const badParse = await checkParseBacklog();
+    if (badParse) return fail(`découpage BACKLOG.md — ${badParse}`);
     server.close();
     console.log("VERIFY OK : le site démarre et répond, contrat du prompt cloud respecté.");
     process.exit(0);
