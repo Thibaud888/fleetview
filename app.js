@@ -11,6 +11,14 @@ const FLEET_PATH = "fleet/fleet.json";
 // une session Actions (garde de fleet-kit/dispatch.yml sur `label.name == 'claude'`), soit deux
 // sessions concurrentes sur le même travail. Ne jamais le coupler à `claude`.
 const CLOUD_LABEL = "cloud";
+// Seuil d'abandon d'un ancrage cloud, en JOURS. À ne surtout PAS confondre avec la règle
+// « muette après 2 h » du canal Actions : le fil d'une issue `cloud` est vide par construction
+// (le dialogue vit dans claude.ai), donc l'inactivité GitHub n'y prouve rien et 2 h y produirait
+// un faux positif à chaque nuit. Seuil long et distinct, mesuré depuis la CRÉATION : passé ce
+// délai sans PR liée, la session interactive a selon toute vraisemblance été abandonnée, et
+// l'issue laissée ouverte fige le repo en « session en cours » — l'anti-collision ⚡ s'y bloque
+// indéfiniment. Trou ouvert par le canal cloud v2 (PR #53), rien ne le détectait avant.
+const CLOUD_ABANDON_D = 3;
 const REFRESH_MS = 120_000;
 
 const store = {
@@ -416,9 +424,20 @@ function buildModel(fleet, D){
         // à attendre ici : ni run Actions, ni commentaire. La règle « muette après 2 h » ne
         // s'applique pas (une session interactive dort la nuit sans être plantée) ; seule
         // l'ouverture de la PR fait avancer l'état, et le merge ferme l'issue via « Closes #N ».
+        const ageD = (Date.now()-new Date(is.created_at))/864e5;
         if(linkedPR){
           status={phase:"pr", c:"warn", label:"PR ouverte",
             hint:`La session cloud a ouvert la PR #${linkedPR.number} — la décision se prend dans le bloc Pull request.`};
+        } else if(ageD>CLOUD_ABANDON_D){
+          // Ancrage en plan : ouvert depuis longtemps, toujours aucune PR. Sans ce cas, l'issue
+          // restait « session cloud en cours » pour toujours — état faux et repo bloqué.
+          bump("crit");
+          const j=Math.round(ageD);
+          status={phase:"abandon", c:"crit", label:"ancrage en plan",
+            hint:`Ancrage ouvert depuis ${j} jours sans PR — la session cloud a sans doute été abandonnée. Tant qu'il reste ouvert, ce repo compte comme « en session » et l'anti-collision y bloque tout nouveau lancement. Reprends le fil dans claude.ai, ou clos l'ancrage.`};
+          lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — 🌩 ancrage en plan depuis ${j} jours, aucune PR`, small:timeAgo(is.created_at), act:{id:"close-anchor", n:is.number, label:"Clore l'ancrage"}});
+          attention.push({c:"crit", repo:id, t:`L'ancrage cloud « ${is.title} » traîne depuis ${j} jours sans PR`, small:timeAgo(is.created_at), verb:"Voir"});
+          next.push({c:"crit", t:`L'ancrage cloud « ${is.title} » est ouvert depuis ${j} jours sans PR — il bloque les lancements sur ce repo`, act:{id:"close-anchor", n:is.number, label:"Clore l'ancrage"}});
         } else {
           bump("info");
           status={phase:"session", c:"info", label:"session cloud",
@@ -1299,6 +1318,19 @@ async function sendComment(repo,num,text){
   await gh(`/repos/${OWNER}/${repo}/issues/${num}/comments`,{method:"POST",body:{body:`@claude ${text}`}});
   toast("💬 Envoyé — la session Claude reprend sur ce fil (relève dans ~1 min).");
 }
+// Clôture d'un ancrage cloud laissé en plan (session interactive abandonnée sans PR).
+// `not_planned` et pas `completed` : rien n'a abouti, et le distinguer garde les chroniques
+// honnêtes. On commente avant de fermer pour laisser une trace de la raison — contrairement au
+// codex, aucun déclencheur ne guette les commentaires d'une issue `cloud` (pas de label
+// `claude`), donc l'ordre n'a ici aucun effet de bord.
+async function closeAnchor(repo,num){
+  if(demo){ toast("Mode démo — rien n'est envoyé. En réel : l'ancrage se ferme et le repo redevient disponible."); return; }
+  await gh(`/repos/${OWNER}/${repo}/issues/${num}/comments`,
+    {method:"POST",body:{body:"→ ancrage clos depuis FleetView : session cloud restée sans PR au-delà du seuil d'abandon."}});
+  await gh(`/repos/${OWNER}/${repo}/issues/${num}`,
+    {method:"PATCH",body:{state:"closed",state_reason:"not_planned"}});
+  toast(`✓ Ancrage #${num} clos — ce repo est de nouveau disponible pour une session.`);
+}
 async function mergePr(repo,num){
   if(demo){ toast("Mode démo — rien n'est envoyé."); return; }
   await gh(`/repos/${OWNER}/${repo}/pulls/${num}/merge`,{method:"PUT",body:{merge_method:"squash"}});
@@ -1894,6 +1926,7 @@ document.addEventListener("click",async(e)=>{
           case "rerun": if(r){ b.disabled=true; await rerunRun(r.id,n); await refresh(); } break;
           case "relabel": if(r){ b.disabled=true;
             await sendComment(r.id,n,"la session ne semble pas avoir abouti — reprends cette issue depuis le début."); await refresh(); } break;
+          case "close-anchor": if(r){ b.disabled=true; await closeAnchor(r.id,n); await refresh(); } break;
           case "life": if(r){ b.disabled=true; await setLifecycle(r.id,n);
             if(n==="archivé") ui.openRepo=null; await refresh(); } break;
           case "run-follow": if(r&&r.lastRun) startJournal(r.id, r.lastRun.id, $("#run-journal"), demo?r.demoJobs:null); break;
@@ -2040,8 +2073,19 @@ $("#ideas").addEventListener("keydown",(e)=>{
 (function initMic(){
   const Ctor=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!Ctor){ document.documentElement.classList.add("no-mic"); return; } // API absente : boutons masqués en CSS
-  let rec=null, activeBtn=null, micGranted=false;
-  function stopRec(){ if(rec){ try{ rec.stop(); }catch(e){} } }
+  // Délai de VRAI silence avant fermeture automatique du micro.
+  // Avant, `continuous=false` laissait l'endpointing natif du navigateur couper à la PREMIÈRE
+  // pause (~1-2 s) : impossible de réfléchir en dictant, la dictée se fermait en pleine phrase.
+  // Il n'y avait donc aucun « délai » à augmenter — il fallait le créer. On tient désormais la
+  // session ouverte nous-mêmes (`continuous` + relance) et on ne ferme qu'après ce délai sans
+  // un seul mot reconnu. 8 s : au-dessus des 5 s demandées, sans laisser le micro ouvert
+  // indéfiniment en cas d'oubli. L'arrêt manuel (2e appui) reste prioritaire à tout moment.
+  const SILENCE_MS=8000;
+  let rec=null, activeBtn=null, micGranted=false, wantStop=false, silence=null;
+  function clearSilence(){ if(silence){ clearTimeout(silence); silence=null; } }
+  // Ré-armé à chaque mot reconnu : le compte à rebours ne court que sur du silence réel.
+  function armSilence(){ clearSilence(); silence=setTimeout(()=>{ wantStop=true; stopRec(); }, SILENCE_MS); }
+  function stopRec(){ clearSilence(); if(rec){ try{ rec.stop(); }catch(e){} } }
   // Déclenche l'invite de permission micro d'Android et enregistre le site dans les
   // autorisations (la Web Speech API seule ne l'y fait pas toujours apparaître).
   async function ensureMic(){
@@ -2059,15 +2103,17 @@ $("#ideas").addEventListener("keydown",(e)=>{
   document.addEventListener("click",async(e)=>{
     const btn=e.target.closest("[data-mic]");
     if(!btn) return;
-    if(activeBtn===btn){ stopRec(); return; } // second appui : arrêt
-    stopRec();
+    if(activeBtn===btn){ wantStop=true; stopRec(); return; } // second appui : arrêt manuel
+    wantStop=true; stopRec();                                // bascule vers un autre champ
     const target=document.querySelector(btn.dataset.mic);
     if(!target) return;
     if(!(await ensureMic())) return;
     const interimEl=btn.dataset.micInterim?document.querySelector(btn.dataset.micInterim):null;
     let base=target.value;
     const r=new Ctor();
-    r.lang="fr-FR"; r.interimResults=true; r.continuous=false;
+    // `continuous=true` : ne pas rendre la main au premier blanc — c'est nous qui décidons
+    // quand la dictée s'arrête (timer de silence ci-dessus ou 2e appui sur le bouton).
+    r.lang="fr-FR"; r.interimResults=true; r.continuous=true;
     r.addEventListener("result",(ev)=>{
       let interim="";
       for(let i=ev.resultIndex;i<ev.results.length;i++){
@@ -2081,13 +2127,27 @@ $("#ideas").addEventListener("keydown",(e)=>{
         if(interim){ interimEl.textContent=interim; interimEl.hidden=false; }
         else { interimEl.hidden=true; interimEl.textContent=""; }
       }
+      armSilence(); // on parle : le compte à rebours repart de zéro
     });
     r.addEventListener("end",()=>{
+      // Chrome termine la reconnaissance de lui-même (blanc court, `no-speech`, plafond de
+      // durée) MÊME en `continuous` — c'est la vraie raison des coupures en pleine réflexion.
+      // Tant que l'arrêt n'a pas été demandé, on relance donc en silence : c'est ce qui fait
+      // tenir la dictée à travers les pauses. La borne reste le timer, qui pose `wantStop`
+      // après SILENCE_MS sans un mot — pas de relance infinie.
+      if(!wantStop && activeBtn===btn){
+        try{ r.start(); return; }catch(err){} // relance impossible : on retombe sur la clôture
+      }
+      clearSilence();
       btn.classList.remove("on");
       if(activeBtn===btn){ activeBtn=null; rec=null; }
       if(interimEl){ interimEl.hidden=true; interimEl.textContent=""; }
     });
     r.addEventListener("error",(ev)=>{
+      // Erreur définitive : couper la relance automatique, sinon `end` reboucle sur un micro
+      // qui ne répondra pas. (`no-speech` en revanche est ATTENDU pendant une pause : on laisse
+      // la relance faire son travail, c'est tout l'objet du délai de silence.)
+      if(ev.error!=="no-speech" && ev.error!=="aborted") wantStop=true;
       if(ev.error==="not-allowed"||ev.error==="service-not-allowed"){
         micGranted=false;
         toast("Micro bloqué. Android : Paramètres → Applications → Chrome (ou FleetView) → Autorisations → Microphone. Sinon, le micro du clavier marche dans n'importe quel champ.", 8000);
@@ -2095,8 +2155,9 @@ $("#ideas").addEventListener("keydown",(e)=>{
         toast("Dictée vocale indisponible pour le moment (elle passe par un service Google, parfois capricieux). Le micro du clavier reste une alternative.", 7000);
       }
     });
-    try{ r.start(); rec=r; activeBtn=btn; btn.classList.add("on"); }
-    catch(err){ btn.classList.remove("on"); }
+    wantStop=false;
+    try{ r.start(); rec=r; activeBtn=btn; btn.classList.add("on"); armSilence(); }
+    catch(err){ btn.classList.remove("on"); clearSilence(); }
   });
 })();
 
