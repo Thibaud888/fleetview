@@ -1408,6 +1408,46 @@ function demoTasks(){
     {repo:"talk-show-oral", title:"Couvrir un texte du parcours encore absent", desc:"", equipped:true},
   ];
 }
+// Découpe un BACKLOG.md en tâches ouvertes {title, desc, codex}. C'EST la version cadrée d'une
+// tâche : le prompt de session cloud la recopie telle quelle, donc rien ne doit se perdre ici.
+// - Multi-ligne : un item cadré peut porter son développé (DoD, contexte) sur des sous-lignes
+//   indentées sous la case — on les agrège, sinon seule la 1re ligne partait dans le prompt.
+// - Titre / développé : coupe au 1er tiret cadratin/demi-cadratin espacé (« — » ou « – »).
+// - SANS séparateur : on ne tronque PLUS le corps (l'ancien `slice(0,160)` coupait en plein mot
+//   ET jetait tout le développé — d'où des prompts « éclatés », le contexte de la tâche absent) :
+//   une tâche courte devient le titre ; une longue garde un titre scannable + le corps ENTIER en
+//   développé, pour que le prompt cloud porte toujours la tâche complète.
+function parseBacklog(md){
+  const lines=String(md).split(/\r?\n/);
+  const out=[];
+  for(let i=0;i<lines.length;i++){
+    if(!lines[i].startsWith("- [ ]")) continue;
+    let raw=lines[i].slice(5);
+    while(i+1<lines.length && /^\s+\S/.test(lines[i+1])) raw+="\n"+lines[++i].replace(/^\s+/,"");
+    // 📱 = tâche promue depuis le codex (workflow codex-cadrage.yml) ; on la retire du texte.
+    const codex=/📱/u.test(raw);
+    raw=raw.replace(/\s*📱\s*/gu," ").trim();
+    // La 1re ligne fait le titre, les sous-lignes le développé ; sur la 1re ligne, un tiret
+    // cadratin/demi-cadratin espacé sépare aussi titre et développé (« <tâche> — <DoD> »).
+    const nl=raw.indexOf("\n");
+    const head=(nl<0?raw:raw.slice(0,nl)).trim();
+    const tail=(nl<0?"":raw.slice(nl+1)).trim();
+    const sep=head.match(/\s[—–]\s/);
+    let title, desc;
+    if(sep){
+      title=head.slice(0,sep.index).trim();
+      desc =[head.slice(sep.index+sep[0].length).trim(), tail].filter(Boolean).join("\n\n");
+    } else if(tail){
+      title=head; desc=tail;
+    } else if(head.length<=120){
+      title=head; desc="";
+    } else {
+      title=head.slice(0,120).replace(/\s+\S*$/,"")+"…"; desc=head;
+    }
+    out.push({codex, title, desc});
+  }
+  return out;
+}
 async function loadTasks(force){
   if(tasksLoading) return;
   if(tasks && !force){ renderTasks(); return; }
@@ -1423,16 +1463,8 @@ async function loadTasks(force){
     await Promise.all(actifs.map(async fr=>{
       try{
         const f=await gh(`/repos/${OWNER}/${fr.repo}/contents/BACKLOG.md`);
-        for(const line of b64d(f.content).split(/\r?\n/)){
-          if(!line.startsWith("- [ ]")) continue;
-          // 📱 en fin d'item = tâche promue depuis le codex (workflow codex-cadrage.yml)
-          const codex=/📱\s*$/u.test(line);
-          const body=(codex?line.replace(/\s*📱\s*$/u,""):line).slice(5).trim();
-          const dash=body.indexOf(" — ");
-          out.push({repo:fr.repo, equipped:!!fr.kit_version, codex,
-            title: dash>0?body.slice(0,dash):body.slice(0,160),
-            desc:  dash>0?body.slice(dash+3):""});
-        }
+        for(const it of parseBacklog(b64d(f.content)))
+          out.push({repo:fr.repo, equipped:!!fr.kit_version, codex:it.codex, title:it.title, desc:it.desc});
       }catch(e){} // 404 : pas de BACKLOG.md — rien à lister
     }));
     tasks=out; tasksAt=new Date();
