@@ -9,6 +9,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
+import { estPrDeSession, seuilFranchiDans, synthetiseChecks } from "./rade.mjs";
 
 const PORT = Number(process.env.VERIFY_PORT ?? 4000);
 const ROOT = process.cwd();
@@ -151,6 +152,43 @@ async function checkParseBacklog() {
   return null;
 }
 
+// Contrat de scripts/rade.mjs (dispatch en rade, veilleur.mjs) — module pur, import direct
+// possible (contrairement à app.js, IIFE de navigateur). Verrouille ce qui distingue une PR de
+// session d'une PR de travail courant, et le franchissement de seuil en un seul passage
+// (le veilleur est sans état : notifier deux fois le même rade serait aussi faux que jamais).
+function checkRade() {
+  if (synthetiseChecks([]) !== "aucun") return "synthetiseChecks([]) doit être « aucun » (repo sans CI)";
+  if (synthetiseChecks([{ status: "in_progress" }]) !== "en_cours")
+    return "un check non terminé doit donner « en_cours »";
+  if (synthetiseChecks([{ status: "completed", conclusion: "success" }]) !== "verts")
+    return "tous les checks au vert doit donner « verts »";
+  if (synthetiseChecks([{ status: "completed", conclusion: "success" },
+      { status: "completed", conclusion: "cancelled" }]) !== "rouges")
+    return "un check annulé parmi les autres doit donner « rouges » (même règle que loadAll() côté app)";
+
+  // Branche `claude/issue-<n>` : signature du dispatch, peu importe l'auteur.
+  if (!estPrDeSession("claude/issue-42", "quelqu-un"))
+    return "estPrDeSession() doit reconnaître claude/issue-<n> quel que soit l'auteur";
+  // Bot Actions sur une branche claude/* : dispatch aussi (poussée par le workflow, pas à la main).
+  if (!estPrDeSession("claude/autre-nom", "github-actions[bot]"))
+    return "estPrDeSession() doit reconnaître une branche claude/* poussée par un bot";
+  // Branche claude/* poussée à la main par Thibaud : session locale, PAS un dispatch en rade.
+  if (estPrDeSession("claude/brief-abonnement", "Thibaud888"))
+    return "estPrDeSession() ne doit PAS classer une branche claude/* humaine comme un dispatch";
+
+  const H = 3_600_000;
+  const t0 = 10 * H; // horloge arbitraire, seules les différences comptent
+  // Créé à t0, seuil 1h : franchi à t0+1h — dans une fenêtre qui l'entoure, pas avant/après.
+  const created = new Date(t0).toISOString();
+  if (!seuilFranchiDans(created, 1, t0 + 0.5 * H, t0 + 1.5 * H))
+    return "seuilFranchiDans() doit détecter un franchissement dans sa fenêtre";
+  if (seuilFranchiDans(created, 1, t0 + 1.6 * H, t0 + 2 * H))
+    return "seuilFranchiDans() ne doit PAS re-déclencher une fenêtre après le franchissement (sinon le veilleur, sans état, notifierait le même rade à chaque cron)";
+  if (seuilFranchiDans(created, 1, t0, t0 + 0.9 * H))
+    return "seuilFranchiDans() ne doit rien détecter avant que le seuil ne soit atteint";
+  return null;
+}
+
 server.listen(PORT, async () => {
   try {
     const res = await fetch(`http://localhost:${PORT}/`);
@@ -161,6 +199,8 @@ server.listen(PORT, async () => {
     if (bad) return fail(`prompt de session cloud — ${bad}`);
     const badParse = await checkParseBacklog();
     if (badParse) return fail(`découpage BACKLOG.md — ${badParse}`);
+    const badRade = checkRade();
+    if (badRade) return fail(`dispatch en rade (scripts/rade.mjs) — ${badRade}`);
     server.close();
     console.log("VERIFY OK : le site démarre et répond, contrat du prompt cloud respecté.");
     process.exit(0);

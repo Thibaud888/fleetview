@@ -287,6 +287,18 @@
       <p class="marginalia num" id="veilleur-status" style="margin:6px 0 0; font-size:12px">—</p>
     </div>
     <div class="field">
+      <label>🔄 Registre de la flotte</label>
+      <div class="settings-row">
+        <button type="button" class="btn" id="btn-refresh-registry">Rafraîchir le registre</button>
+      </div>
+      <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
+        Un projet créé depuis FleetView (ou toute autre découverte) n'apparaît dans l'atelier
+        qu'après ce rafraîchissement — déclenche <code>fleet-refresh.yml</code> sur claude-ops
+        (~30 s), puis relit automatiquement. Se lance aussi tout seul en fin de « Nouveau projet ».
+      </p>
+      <p class="marginalia num" id="registry-refresh-status" style="margin:6px 0 0; font-size:12px">—</p>
+    </div>
+    <div class="field">
       <label>Compte GitHub</label>
       <button type="button" class="btn" id="btn-change-token">Changer le token…</button>
       <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">Le token reste dans ce navigateur (localStorage) et ne transite que vers api.github.com.</p>

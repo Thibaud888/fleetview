@@ -16,10 +16,16 @@
 //   NTFY_TOPIC     — le nom du sujet ntfy secret (le même que côté claude-ops).
 // Absents → sortie 0 silencieuse (le cron reste vert tant que tu n'as pas activé le veilleur).
 
+import { estPrDeSession, seuilFranchiDans, synthetiseChecks } from "./rade.mjs";
+
 const OWNER = "Thibaud888";
 const META = "claude-ops";
 const APP_URL = "https://thibaud888.github.io/fleetview/";
 const WINDOW_MIN = Number(process.env.WINDOW_MIN ?? 20); // repli si pas d'historique
+// Dispatchs en rade (cf. scripts/rade.mjs, miroir de claude-ops scripts/brief-rade.mjs) :
+// issue sans PR/session au-delà de ce seuil, PR verte non mergée au-delà de ce seuil.
+const RADE_SEUIL_H = 1;
+const RADE_SEUIL_SANS_CI_H = 12; // repo sans CI : rien ne prouve la fin du travail, on laisse la nuit
 
 const token = process.env.FLEET_GH_TOKEN;
 const topic = process.env.NTFY_TOPIC;
@@ -104,26 +110,38 @@ for (const p of openPRs) {
     const d = await gh(`/repos/${OWNER}/${p.repo}/pulls/${p.number}`);
     const cr = await gh(`/repos/${OWNER}/${p.repo}/commits/${d.head.sha}/check-runs?per_page=30`);
     const runs = cr.check_runs || [];
-    if (!runs.length) {
+    const checks = synthetiseChecks(runs);
+
+    if (checks === "aucun") {
       // Pas de CI sur cette PR : l'app la classe quand même « attend ta décision » —
       // notifier à sa création, sinon le filet « app fermée » a un trou.
       if (inWindow(p.created_at)) {
         events.push({ title: `${p.repo} — PR #${p.number} attend ta décision`, msg: p.title,
           tag: "white_check_mark", click: `${APP_URL}?repo=${encodeURIComponent(p.repo)}` });
       }
-      continue;
+    } else if (checks === "verts" || checks === "rouges") {
+      const doneAt = Math.max(...runs.map((c) => new Date(c.completed_at || 0).getTime()));
+      if (doneAt >= since) {
+        // `cancelled` compte comme échec : même règle que l'app (checks.bad de loadAll) —
+        // sinon le veilleur annonce « prête à merger » une PR que l'app affiche en échec.
+        events.push(checks === "rouges"
+          ? { title: `${p.repo} — tests de la PR #${p.number} en échec`, msg: p.title,
+              tag: "x", click: `${APP_URL}?repo=${encodeURIComponent(p.repo)}` }
+          : { title: `${p.repo} — PR #${p.number} prête à merger`, msg: p.title,
+              tag: "white_check_mark", click: `${APP_URL}?repo=${encodeURIComponent(p.repo)}` });
+      }
     }
-    if (runs.some((c) => c.status !== "completed")) continue;
-    const doneAt = Math.max(...runs.map((c) => new Date(c.completed_at || 0).getTime()));
-    if (doneAt < since) continue; // les checks ne viennent pas de se terminer
-    // `cancelled` compte comme échec : même règle que l'app (checks.bad de loadAll) —
-    // sinon le veilleur annonce « prête à merger » une PR que l'app affiche en échec.
-    const bad = runs.filter((c) => ["failure", "timed_out", "cancelled"].includes(c.conclusion)).length;
-    events.push(bad
-      ? { title: `${p.repo} — tests de la PR #${p.number} en échec`, msg: p.title,
-          tag: "x", click: `${APP_URL}?repo=${encodeURIComponent(p.repo)}` }
-      : { title: `${p.repo} — PR #${p.number} prête à merger`, msg: p.title,
-          tag: "white_check_mark", click: `${APP_URL}?repo=${encodeURIComponent(p.repo)}` });
+    // checks === "en_cours" : rien à faire, on attend la fin.
+
+    // Dispatch en rade (volet PR) : PR de session (checks verts, ou repo sans CI) toujours
+    // ouverte bien après — le merge auto n'a pas eu lieu, le travail est fini mais pas livré.
+    if (!d.draft && (checks === "verts" || checks === "aucun") && estPrDeSession(d.head.ref, d.user?.login)) {
+      const seuil = checks === "verts" ? RADE_SEUIL_H : RADE_SEUIL_SANS_CI_H;
+      if (seuilFranchiDans(p.created_at, seuil, since)) {
+        events.push({ title: `${p.repo} — PR #${p.number} en rade`, msg: `${p.title} (prête depuis plus de ${seuil} h, pas mergée)`,
+          tag: "warning", click: `${APP_URL}?repo=${encodeURIComponent(p.repo)}` });
+      }
+    }
   } catch (e) { console.log(`(ignoré) PR ${p.repo}#${p.number} : ${e.message}`); }
 }
 
@@ -143,6 +161,25 @@ for (const is of issuesRes.items || []) {
         tag: "speech_balloon", click: `${APP_URL}?repo=${encodeURIComponent(repo)}` });
     }
   } catch (e) { console.log(`(ignoré) commentaires ${repo}#${is.number} : ${e.message}`); }
+}
+
+// 3bis. Dispatch en rade (volet issue) : issue `claude` sans PR liée, sans session Actions
+// active récente (< 3h : au-delà elle est coincée, pas vivante) — la session a échoué avant
+// de pousser, ou n'a jamais démarré. Contrairement à la boucle précédente, on regarde TOUTES
+// les issues (même sans commentaire : une session qui plante tôt n'en laisse aucun).
+for (const is of issuesRes.items || []) {
+  const repo = is.repository_url.split("/").pop();
+  if (!suivis.has(repo)) continue;
+  const linkedPR = openPRs.some((p) => p.repo === repo && new RegExp(`#${is.number}\\b`).test(p.body || ""));
+  if (linkedPR || !seuilFranchiDans(is.created_at, RADE_SEUIL_H, since)) continue;
+  try {
+    const runs = await gh(`/repos/${OWNER}/${repo}/actions/runs?per_page=10`);
+    const active = (runs.workflow_runs || []).some((r) =>
+      r.status !== "completed" && Date.now() - new Date(r.created_at).getTime() < 3 * 3_600_000);
+    if (active) continue; // une session est peut-être en train de la produire, pas encore un rade
+    events.push({ title: `${repo} — dispatch en rade`, msg: `${is.title} (aucune PR ni session en cours)`,
+      tag: "warning", click: `${APP_URL}?repo=${encodeURIComponent(repo)}` });
+  } catch (e) { console.log(`(ignoré) rade ${repo}#${is.number} : ${e.message}`); }
 }
 
 // 4. Questions du cadrage sur les idées du codex (dernier commentaire 🪶 dans la fenêtre).

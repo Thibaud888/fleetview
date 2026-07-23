@@ -1389,11 +1389,77 @@ async function newProject(name,type,priv){
   const secretUrl=`https://github.com/${OWNER}/${name}/settings/secrets/actions/new`;
   await gh(`/repos/${OWNER}/${name}/issues`,{method:"POST",body:{
     title:"Finaliser l'équipement du repo",
-    body:`Repo créé depuis FleetView avec les stubs du kit (${type}).\n\nReste à faire (sans terminal) :\n- [ ] **Poser le secret \`CLAUDE_CODE_OAUTH_TOKEN\`** (ou \`ANTHROPIC_API_KEY\`) → [ouvrir la page du secret](${secretUrl}), coller la clé Claude, « Add secret ». Requis pour la première session.\n- [ ] Activer « Actions peut créer des PRs » (Settings → Actions → Workflow permissions)\n- [ ] Personnaliser CLAUDE.md (placeholders TODO)\n- [ ] Rafraîchir le registre : \`node scripts/fleet.mjs\` sur claude-ops (pour voir la carte dans FleetView)\n${type.startsWith("cron")?"- [ ] Créer le workflow planifié + self-heal\n":""}`}});
+    body:`Repo créé depuis FleetView avec les stubs du kit (${type}).\n\nReste à faire (sans terminal) :\n- [ ] **Poser le secret \`CLAUDE_CODE_OAUTH_TOKEN\`** (ou \`ANTHROPIC_API_KEY\`) → [ouvrir la page du secret](${secretUrl}), coller la clé Claude, « Add secret ». Requis pour la première session.\n- [ ] Activer « Actions peut créer des PRs » (Settings → Actions → Workflow permissions)\n- [ ] Personnaliser CLAUDE.md (placeholders TODO)\n${type.startsWith("cron")?"- [ ] Créer le workflow planifié + self-heal\n":""}`}});
   // Ouvre la page du secret et copie le nom : la première session part sans passer par un terminal.
   try{ navigator.clipboard && navigator.clipboard.writeText("CLAUDE_CODE_OAUTH_TOKEN"); }catch(e){}
   try{ window.open(secretUrl,"_blank","noopener"); }catch(e){}
   toast(`⚒ ${name} créé et équipé. Onglet ouvert pour poser le secret Claude (nom copié) — colle ta clé, « Add secret », et la première session peut partir.`, 8000);
+  // Le registre (fleet.json) ne se met pas à jour tout seul : sans ce déclenchement, ${name}
+  // resterait invisible dans l'atelier tant que fleet-refresh.yml n'a pas tourné (cron hebdo).
+  refreshRegistry(true).catch(()=>{});
+}
+
+/* ===== Registre rafraîchissable (feature : voir un nouveau projet sans terminal) ===== */
+// `fleet-refresh.yml` (claude-ops) exécute scripts/fleet.mjs et committe le registre — 0 token,
+// pas de session Claude. Le workflow_dispatch ne renvoie pas d'id de run (204 sans corps) : on
+// repère le run le plus récent créé après le déclenchement, puis on attend sa fin au même
+// rythme que le journal de run (4,5 s) avant de relire (loadAll()).
+let registryWatch=null;
+function setRegistryStatus(text){ const el=$("#registry-refresh-status"); if(el) el.textContent=text; }
+async function refreshRegistry(fromNewProject){
+  if(demo){ if(!fromNewProject) toast("Mode démo — rien n'est envoyé."); return; }
+  const since=Date.now()-5000; // marge : l'horloge du run peut être posée juste avant l'appel
+  try{
+    await gh(`/repos/${OWNER}/${META}/actions/workflows/fleet-refresh.yml/dispatches`,
+      {method:"POST",body:{ref:"main"}});
+  }catch(e){
+    const msg = e.status===404
+      ? "workflow fleet-refresh.yml introuvable sur claude-ops (pré-requis pas encore posé)"
+      : errMsg(e);
+    setRegistryStatus("⚠ "+msg);
+    toast("⚠ Rafraîchissement du registre impossible — "+msg, 7500);
+    return;
+  }
+  setRegistryStatus("⟳ en cours…");
+  if(!fromNewProject) toast("⟳ Registre en cours de rafraîchissement (≈ 30 s)…", 6000);
+  clearInterval(registryWatch);
+  let tries=0;
+  registryWatch=setInterval(async()=>{
+    tries++;
+    if(tries>20){ clearInterval(registryWatch); registryWatch=null;
+      setRegistryStatus("⟳ toujours en cours — le prochain relevé automatique le verra"); return; }
+    try{
+      const r=await gh(`/repos/${OWNER}/${META}/actions/workflows/fleet-refresh.yml/runs?per_page=5`);
+      const run=(r.workflow_runs||[]).find(x=>new Date(x.created_at).getTime()>=since);
+      if(!run || run.status!=="completed") return; // pas encore là, ou toujours en cours
+      clearInterval(registryWatch); registryWatch=null;
+      if(run.conclusion==="success"){
+        setRegistryStatus("✓ registre à jour · "+timeAgo(run.updated_at||run.created_at));
+        toast(fromNewProject ? "✓ Registre rafraîchi — le nouveau projet devrait apparaître dans l'atelier."
+                              : "✓ Registre rafraîchi.", 6000);
+        await refresh(true);
+      }else{
+        setRegistryStatus("⚠ le dernier passage a échoué — voir Actions sur claude-ops");
+        toast("⚠ Le rafraîchissement du registre a échoué (onglet Actions de claude-ops).", 7500);
+      }
+    }catch(e){ /* erreur ponctuelle : on retente au prochain tick */ }
+  }, 4500);
+}
+// État affiché à l'ouverture des paramètres — sans dispatcher (lecture seule du dernier passage).
+async function refreshRegistryStatus(){
+  const el=$("#registry-refresh-status"); if(!el || demo || !store.token || registryWatch) return;
+  el.textContent="vérification…";
+  try{
+    const r=await gh(`/repos/${OWNER}/${META}/actions/workflows/fleet-refresh.yml/runs?per_page=1`);
+    const run=(r.workflow_runs||[])[0];
+    el.textContent = run
+      ? (run.conclusion==="success"?"✓ dernier passage réussi":"⚠ dernier passage en échec")+" · "+timeAgo(run.run_started_at||run.created_at)
+      : "pas encore de passage";
+  }catch(e){
+    el.textContent = e.status===404
+      ? "⚠ workflow introuvable sur claude-ops (pré-requis pas encore posé)"
+      : "état inconnu ("+errMsg(e)+")";
+  }
 }
 
 /* ================= Tâches de la flotte (BACKLOG.md agrégés) ================= */
@@ -2232,9 +2298,10 @@ async function refreshVeilleurStatus(){
 }
 $("#btn-settings").addEventListener("click",()=>{
   $("#ntfy-input").value=store.ntfy;
-  renderRate(); updateNotifStatus(); refreshVeilleurStatus();
+  renderRate(); updateNotifStatus(); refreshVeilleurStatus(); refreshRegistryStatus();
   modalSettings.showModal();
 });
+$("#btn-refresh-registry").addEventListener("click",()=>refreshRegistry(false));
 $("#modal-settings-close").addEventListener("click",()=>modalSettings.close());
 $("#modal-cloud-close").addEventListener("click",()=>$("#modal-cloud").close());
 // « Copier et ouvrir » : la copie se fait DANS le geste de tap, puis on laisse le lien s'ouvrir

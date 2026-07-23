@@ -257,9 +257,14 @@ Bouton **⚒ Nouveau projet** (ou le lien dans la modale Demande). Tu donnes un 
 3. pose le label `claude`,
 4. ouvre une **issue de finition** listant les gestes manuels restants.
 
-Le projet apparaît alors dans l'atelier au relevé suivant. **À finir à la main une fois**
-(l'issue le rappelle) : poser le secret `CLAUDE_CODE_OAUTH_TOKEN`, activer « Actions peut créer
-des PRs », et rafraîchir le registre (`node scripts/fleet.mjs` sur claude-ops).
+FleetView déclenche alors tout seul le rafraîchissement du registre (`fleet-refresh.yml` sur
+claude-ops) et relit dès qu'il est terminé (~30 s) : le projet apparaît dans l'atelier sans
+manipulation. **À finir à la main une fois** (l'issue le rappelle) : poser le secret
+`CLAUDE_CODE_OAUTH_TOKEN` et activer « Actions peut créer des PRs ».
+
+> Le registre peut aussi être rafraîchi à la demande — bouton « Rafraîchir le registre »
+> dans ⚙ Paramètres (utile après un changement fait ailleurs que par « Nouveau projet », ou si
+> le déclenchement automatique a été manqué).
 
 > C'est l'équivalent, depuis l'interface, de la commande `/nouveau-projet` de claude-ops.
 
@@ -279,7 +284,10 @@ quand il est actif :
 2. **ntfy depuis l'app** (⚙ → champ URL) — pareil, mais livré via l'app ntfy. Même limite.
 3. **Le veilleur de la flotte** — pour être notifié **même app fermée** : un cron GitHub
    Actions de CE repo (`veilleur.yml`, toutes les 15 min, gratuit car repo public) surveille
-   la flotte côté serveur et pousse sur ntfy. Activation en 2 minutes, sans terminal :
+   la flotte côté serveur et pousse sur ntfy — questions de Claude, PR prêtes ou en échec,
+   questions du cadrage, et **dispatchs en rade** (issue `claude` sans PR ni session en cours,
+   ou PR de session prête mais jamais mergée — le suivi du brief hebdo de claude-ops, mais en
+   continu). Activation en 2 minutes, sans terminal :
    - pose deux secrets sur `fleetview` (Settings → Secrets and variables → Actions) :
      **`FLEET_GH_TOKEN`** (PAT fine-grained : Contents+Issues+Pull requests+Actions en lecture
      sur la flotte — celui de claude-ops convient) et **`NTFY_TOPIC`** (le nom de ton sujet
@@ -387,7 +395,7 @@ un seul domicile, pas de copie ici qui finirait par diverger.
 | Symptôme | Piste |
 |---|---|
 | Écran de config qui revient / bandeau « token refusé » | Token expiré ou permissions insuffisantes — recrée-le avec les 6 permissions du §2. |
-| Un projet n'apparaît pas | Absent de `fleet.json` : lance `node scripts/fleet.mjs` sur claude-ops. |
+| Un projet n'apparaît pas | Absent de `fleet.json` : bouton « Rafraîchir le registre » dans ⚙ Paramètres (ou `node scripts/fleet.mjs` sur claude-ops en repli si `fleet-refresh.yml` n'est pas encore posé). |
 | « Lancer » ne déclenche rien côté GitHub | Le repo cible n'a pas le workflow `claude.yml`, ou le secret `CLAUDE_CODE_OAUTH_TOKEN` manque, ou « Actions crée des PRs » est désactivé. |
 | Le dialogue d'une issue directe reste vide | La session Actions n'a pas encore commenté — patiente un cycle de relevé (~1-2 min) ou vérifie le run Actions. |
 | Une idée reste bloquée « à préciser » | Sa question est affichée dans le codex (groupe « ⏳ À toi de répondre ») : clique une option ou réponds — le cadrage repart tout seul. |
@@ -401,11 +409,8 @@ un seul domicile, pas de copie ici qui finirait par diverger.
 
 Le gros du confort est déjà livré (service worker + cache hors-ligne, icônes PWA PNG maskable,
 journal de run en direct, secret Claude au bootstrap, quota API, notifications ntfy/natives,
-lanceur de session cloud). Ce qui reste, dans le [BACKLOG](../BACKLOG.md) :
-
-- **Registre rafraîchissable depuis l'interface** — un bouton « Rafraîchir le registre » + un
-  déclenchement automatique en fin de « Nouveau projet » (via un workflow `fleet-refresh.yml` côté
-  claude-ops), pour qu'un projet créé apparaisse dans l'atelier sans passer par un terminal.
+lanceur de session cloud, registre rafraîchissable, veilleur avec dispatchs en rade). Voir le
+[BACKLOG](../BACKLOG.md) pour ce qui reste.
 
 Convention du repo : 1 item = 1 session = 1 PR ; vérifier avec `node scripts/verify.mjs` avant
 de conclure ; commits en français, branche + PR (jamais de push direct sur `main`).
