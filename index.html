@@ -137,8 +137,8 @@
         <span class="aside-link"><a href="#" id="link-newproject">⚒ ou créer un nouveau projet…</a></span>
       </div>
       <div class="field">
-        <label for="f-title">Titre</label>
-        <input id="f-title" type="text" placeholder="Ex. : corriger l'affichage mobile du quiz" required>
+        <label for="f-title">Titre <small>— optionnel : laissé vide, il est résumé depuis les détails</small></label>
+        <input id="f-title" type="text" placeholder="Laisse vide pour un titre auto depuis les détails">
         <div class="mic-row">
           <button type="button" class="btn btn-mic" data-mic="#f-title" data-mic-interim="#f-title-interim" aria-label="Dicter le titre" title="Dicter le titre">🎙️</button>
           <span class="mic-interim" id="f-title-interim" hidden></span>
@@ -146,7 +146,7 @@
       </div>
       <div class="field">
         <label for="f-desc">Détails <small>— tout ce que tu as en tête, même en vrac</small></label>
-        <textarea id="f-desc" placeholder="On mettra tout au propre dans la session de toute façon."></textarea>
+        <textarea id="f-desc" placeholder="Décris ce que tu veux ; le titre se remplira tout seul si tu le laisses vide."></textarea>
         <div class="mic-row">
           <button type="button" class="btn btn-mic" data-mic="#f-desc" data-mic-interim="#f-desc-interim" aria-label="Dicter les détails" title="Dicter les détails">🎙️</button>
           <span class="mic-interim" id="f-desc-interim" hidden></span>
@@ -191,6 +191,10 @@
             <span><b>Fable</b><small>le plus capable — à réserver à l'exceptionnel · possiblement retiré sous peu</small></span></label>
         </div>
       </div>
+    </div>
+    <div class="send-confirm" id="send-confirm" hidden>
+      <p class="send-confirm-msg" id="send-confirm-msg"></p>
+      <div class="send-confirm-actions" id="send-confirm-actions"></div>
     </div>
     <div class="modal-foot">
       <span class="poc-note" id="modal-note"></span>
@@ -264,10 +268,11 @@
         <span class="marginalia" id="notif-status" style="font-size:12.5px; align-self:center"></span>
       </div>
       <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
-        FleetView notifie <b>directement</b> ton appareil quand une action t'attend (question de Claude,
-        PR prête, question du cadrage) ; le clic ouvre le bon endroit. Marche tant que l'onglet FleetView
-        est <b>ouvert et visible</b> — onglet en arrière-plan ou app fermée, c'est le <b>veilleur</b>
-        qui prend le relais (ci-dessous).
+        Quand une action t'attend (question de Claude, changement prêt à valider…), FleetView te notifie
+        <b>directement sur cet appareil</b> ; le clic ouvre le bon endroit. Marche tant que FleetView est
+        <b>ouvert</b>. <b>App fermée, c'est le veilleur qui prend le relais</b> (plus bas) — tu n'as rien
+        de plus à régler, et une même alerte n'arrive <b>jamais deux fois</b> (à l'ouverture, l'app ne
+        re-sonne pas ce que le veilleur a déjà poussé).
       </p>
     </div>
     <div class="field">
@@ -279,10 +284,11 @@
         <button type="button" class="btn" id="ntfy-clear">Désactiver</button>
       </div>
       <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
-        Livré via l'app <b>ntfy</b> (abonne-toi au même sujet secret dans l'app). L'URL reste dans ce navigateur.
-        💡 Pour être notifié même <b>app fermée</b>, active le <b>veilleur de la flotte</b> : un cron du repo
-        fleetview qui surveille et pousse sur ntfy toutes les 15 min (guide §7). S'il est actif, laisse ce
-        champ-ci vide — sinon tu recevras tout en double.
+        Alternative aux notifications de l'appareil, via l'app <b>ntfy</b> (abonne-toi au même sujet secret).
+        L'URL reste dans ce navigateur. ⚠️ <b>Si le veilleur est actif</b> (état ci-dessous), <b>laisse ce
+        champ vide</b> : il pousse déjà sur ntfy quand l'app est fermée, le remplir ici te ferait tout
+        recevoir <b>en double</b>. 💡 Pour être notifié <b>app fermée</b>, c'est justement le veilleur
+        (cron du repo fleetview, 15 min, guide §7) — pas ce champ.
       </p>
       <p class="marginalia num" id="veilleur-status" style="margin:6px 0 0; font-size:12px">—</p>
     </div>

@@ -182,6 +182,22 @@ function parseOptions(body){
 // Libellé court d'une option pour un bouton (sans balisage markdown).
 function optLabel(t){ const s=String(t).replace(/\*\*|`/g,""); return s.length>64?s.slice(0,62)+"…":s; }
 
+// Titre de secours quand on ne l'a pas saisi (issue point 11 : « je mette juste la description »).
+// Pas de vrai résumé côté navigateur (aucun modèle à l'exécution) : on prend une amorce PROPRE
+// des détails — 1re phrase si elle est courte, sinon le début coupé à ~70 caractères sur une
+// frontière de mot, 1re lettre capitalisée, sans ponctuation finale. Suffisant pour un titre
+// d'issue lisible ; la vraie mise au propre se fait dans la session de toute façon. Fonction
+// PURE (testée par scripts/verify.mjs, checkTitle).
+function summarizeTitle(desc){
+  let s=String(desc||"").replace(/\s+/g," ").trim();
+  if(!s) return "";
+  const m=s.match(/^(.+?[.!?…])(?:\s|$)/); // 1re phrase, si terminateur trouvé
+  if(m && m[1].length<=80) s=m[1];
+  s=s.replace(/[\s.!?…,;:]+$/,"");         // ponctuation/espaces de fin
+  if(s.length>70) s=s.slice(0,70).replace(/\s+\S*$/,"").trim()+"…";
+  return s ? s.charAt(0).toUpperCase()+s.slice(1) : "";
+}
+
 // Frontière de confiance : seuls les BOTS parlent au nom de Claude (github-actions[bot],
 // claude[bot]…). Sur un repo public, n'importe qui peut commenter une issue — un tiers ne
 // doit ni s'afficher « Claude », ni produire des boutons de réponse en un clic.
@@ -433,53 +449,53 @@ function buildModel(fleet, D){
           // restait « session cloud en cours » pour toujours — état faux et repo bloqué.
           bump("crit");
           const j=Math.round(ageD);
-          status={phase:"abandon", c:"crit", label:"ancrage en plan",
-            hint:`Ancrage ouvert depuis ${j} jours sans PR — la session cloud a sans doute été abandonnée. Tant qu'il reste ouvert, ce repo compte comme « en session » et l'anti-collision y bloque tout nouveau lancement. Reprends le fil dans claude.ai, ou clos l'ancrage.`};
-          lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — 🌩 ancrage en plan depuis ${j} jours, aucune PR`, small:timeAgo(is.created_at), act:{id:"close-anchor", n:is.number, label:"Clore l'ancrage"}});
-          attention.push({c:"crit", repo:id, t:`L'ancrage cloud « ${is.title} » traîne depuis ${j} jours sans PR`, small:timeAgo(is.created_at), verb:"Voir"});
-          next.push({c:"crit", t:`L'ancrage cloud « ${is.title} » est ouvert depuis ${j} jours sans PR — il bloque les lancements sur ce repo`, act:{id:"close-anchor", n:is.number, label:"Clore l'ancrage"}});
+          status={phase:"abandon", c:"crit", label:"session cloud oubliée",
+            hint:`Session cloud ouverte depuis ${j} jours sans résultat — sans doute abandonnée. Tant qu'elle reste ouverte, ce projet compte comme occupé et tu ne peux rien y relancer. Reprends-la dans claude.ai, ou clos-la ici.`};
+          lines.push({c:"crit", t:`« ${is.title} » — 🌩 session cloud oubliée depuis ${j} jours, sans résultat`, small:timeAgo(is.created_at), act:{id:"close-anchor", n:is.number, label:"Clore"}});
+          attention.push({c:"crit", repo:id, t:`La session cloud « ${is.title} » traîne depuis ${j} jours sans résultat`, small:timeAgo(is.created_at), thread:is.number, verb:"Voir"});
+          next.push({c:"crit", t:`La session cloud « ${is.title} » est ouverte depuis ${j} jours sans résultat — elle occupe ce projet pour rien`, act:{id:"close-anchor", n:is.number, label:"Clore la session"}});
         } else {
           bump("info");
           status={phase:"session", c:"info", label:"session cloud",
-            hint:"Session interactive en cours dans claude.ai — le dialogue s'y passe, pas ici. L'issue se fermera toute seule au merge de la PR."};
-          lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — 🌩 session cloud en cours`, small:timeAgo(is.created_at), act:{id:"gh-issue", n:is.number, label:"Voir l'issue"}});
+            hint:"Discussion en cours dans claude.ai — elle se passe là-bas, pas ici. Ça se referme tout seul une fois les changements validés."};
+          lines.push({c:"info", t:`« ${is.title} » — 🌩 session cloud en cours`, small:timeAgo(is.created_at), act:{id:"gh-issue", n:is.number, label:"Voir sur GitHub"}});
         }
       } else if(linkedPR){
         // La PR parle pour elle (état et lignes traités plus bas) — mais le fil reste
         // visible : l'issue est encore ouverte, on peut vouloir y répondre.
-        status={phase:"pr", c:"warn", label:"PR ouverte",
-          hint:`La session a ouvert la PR #${linkedPR.number} — la décision se prend dans le bloc Pull request.`};
+        status={phase:"pr", c:"warn", label:"proposition prête",
+          hint:`Claude a proposé des changements (PR #${linkedPR.number}) — à examiner et valider dans le bloc « Pull request », plus bas.`};
       } else if(claudeRunning && !asksQuestion){
         bump("info");
-        status={phase:"session", c:"info", label:"session en cours",
-          hint:"Claude travaille — rien à faire pour l'instant, le journal du run défile plus bas."};
-        lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session en cours`, small:timeAgo(is.updated_at), act:{id:"gh-issue", n:is.number, label:"Suivre"}});
+        status={phase:"session", c:"info", label:"Claude travaille",
+          hint:"Claude est au travail — rien à faire pour l'instant, son avancement défile plus bas."};
+        lines.push({c:"info", t:`« ${is.title} » — Claude travaille`, small:timeAgo(is.updated_at), act:{id:"gh-issue", n:is.number, label:"Suivre"}});
       } else if(lastFromClaude){
         bump("warn");
         status={phase:"question", c:"warn", label:"à toi de répondre",
-          hint:"Claude te pose une question et attend ta réponse pour continuer — choisis une option ou réponds librement."};
-        lines.push({c:"warn", t:`Issue #${is.number} « ${is.title} » — Claude attend ta réponse`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
-        attention.push({c:"warn", repo:id, t:`Claude te pose une question sur « ${is.title} »`, small:timeAgo(lastC.created_at), verb:"Répondre"});
-        next.push({c:"warn", t:`Réponds à Claude sur « ${is.title} » — la session est en pause en attendant`, act:{id:"open-thread", n:is.number, label:"Répondre ↓"}});
+          hint:"Claude te pose une question et attend ta réponse pour continuer — choisis une option, ou réponds librement."};
+        lines.push({c:"warn", t:`« ${is.title} » — Claude attend ta réponse`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
+        attention.push({c:"warn", repo:id, t:`Claude te pose une question sur « ${is.title} »`, small:timeAgo(lastC.created_at), thread:is.number, verb:"Répondre"});
+        next.push({c:"warn", t:`Réponds à Claude sur « ${is.title} » — il attend ta réponse pour continuer`, act:{id:"open-thread", n:is.number, label:"Répondre ↓"}});
         notify.push({key:`q:${id}#${is.number}:${lastC.id||lastC.created_at}`, kind:"q",
           title:`${id} — Claude attend ta réponse`, msg:is.title, repo:id, tag:"speech_balloon", prio:4});
       } else if(idleH>2){
         bump("crit");
-        status={phase:"silence", c:"crit", label:"session muette",
-          hint:`Plus de nouvelles depuis ${Math.round(idleH)} h — la session a sans doute planté. Relance-la, ça repart de zéro sur cette issue.`};
-        lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — muette depuis ${Math.round(idleH)} h`, act:{id:"relabel", n:is.number, label:"Relancer"}});
-        attention.push({c:"crit", repo:id, t:`La session sur « ${is.title} » est muette depuis ${Math.round(idleH)} h`, verb:"Voir"});
-        next.push({c:"crit", t:`La session sur « ${is.title} » est muette depuis ${Math.round(idleH)} h — sans doute plantée`, act:{id:"relabel", n:is.number, label:"Relancer la session"}});
+        status={phase:"silence", c:"crit", label:"sans réponse",
+          hint:`Aucune nouvelle depuis ${Math.round(idleH)} h — Claude s'est sans doute arrêté en cours de route. Relance : ça reprend depuis ta demande.`};
+        lines.push({c:"crit", t:`« ${is.title} » — silence depuis ${Math.round(idleH)} h`, act:{id:"relabel", n:is.number, label:"Relancer"}});
+        attention.push({c:"crit", repo:id, t:`« ${is.title} » : Claude ne répond plus depuis ${Math.round(idleH)} h`, thread:is.number, verb:"Reprendre"});
+        next.push({c:"crit", t:`« ${is.title} » : aucune nouvelle depuis ${Math.round(idleH)} h — Claude s'est sans doute arrêté en cours de route`, act:{id:"relabel", n:is.number, label:"Relancer"}});
       } else if(lastC){
         bump("info");
         status={phase:"repondu", c:"info", label:"réponse envoyée",
-          hint:"Ta réponse est partie — la session reprend d'elle-même (compte ~1 min avant le prochain signe de vie)."};
-        lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — réponse envoyée, la session reprend`, small:timeAgo(lastC.created_at)});
+          hint:"Ta réponse est partie — Claude reprend tout seul (compte ~1 min avant le prochain signe de vie)."};
+        lines.push({c:"info", t:`« ${is.title} » — réponse envoyée, ça reprend`, small:timeAgo(lastC.created_at)});
       } else {
         bump("info");
         status={phase:"lancement", c:"info", label:"démarrage",
-          hint:"La session démarre — premier signe de vie d'ici quelques minutes."};
-        lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session en attente de démarrage`, small:timeAgo(is.created_at)});
+          hint:"Ça démarre — premier signe de vie d'ici quelques minutes."};
+        lines.push({c:"info", t:`« ${is.title} » — démarrage en cours`, small:timeAgo(is.created_at)});
       }
       threadIssues.push({num:is.number, title:is.title, comments, body:is.body, status});
       feed.push({ts:is.created_at, c:"info", repo:id, txt:`Issue #${is.number} « ${is.title} » ouverte.`});
@@ -490,11 +506,11 @@ function buildModel(fleet, D){
       seen(p.updated_at);
       const det = D.prDetails[id+"#"+p.number];
       const ch = det&&det.checks;
-      const chTxt = ch ? (ch.pending? "checks en cours" : ch.bad? `${ch.bad} check(s) en échec` : `checks ✓ ${ch.ok}/${ch.total}`) : "checks ?";
+      const chTxt = ch ? (ch.pending? "tests en cours" : ch.bad? `${ch.bad} test(s) en échec` : `tests ✓ ${ch.ok}/${ch.total}`) : "tests ?";
       if(ch && ch.bad){
         bump("crit");
         lines.push({c:"crit", t:`PR #${p.number} « ${p.title} » — ${chTxt}`, act:{id:"open-pr", n:p.number, label:"Examiner"}});
-        attention.push({c:"crit", repo:id, t:`Les tests de la PR #${p.number} « ${p.title} » échouent`, verb:"Voir"});
+        attention.push({c:"crit", repo:id, t:`Les tests de la PR #${p.number} « ${p.title} » échouent`, pr:p.number, verb:"Voir"});
         next.push({c:"crit", t:`Les tests de la PR #${p.number} « ${p.title} » échouent — demande la correction ou regarde les logs`, act:{id:"open-pr", n:p.number, label:"Examiner ↓"}});
       } else if(ch && ch.pending){
         bump("info");
@@ -502,7 +518,7 @@ function buildModel(fleet, D){
       } else {
         bump("warn");
         lines.push({c:"warn", t:`PR #${p.number} « ${p.title} » — ${chTxt}, attend ta décision`, small:timeAgo(p.created_at), act:{id:"open-pr", n:p.number, label:"Examiner"}});
-        attention.push({c:"warn", repo:id, t:`La PR #${p.number} « ${p.title} » est prête (tests verts)`, small:timeAgo(p.created_at), verb:"Décider"});
+        attention.push({c:"warn", repo:id, t:`La PR #${p.number} « ${p.title} » est prête (tests verts)`, small:timeAgo(p.created_at), pr:p.number, verb:"Décider"});
         next.push({c:"warn", t:`La PR #${p.number} « ${p.title} » est prête (tests verts) — merger, ou demander des changements`, act:{id:"open-pr", n:p.number, label:"Décider ↓"}});
         notify.push({key:`pr:${id}#${p.number}`, kind:"pr",
           title:`${id} — PR #${p.number} prête à merger`, msg:p.title, repo:id, tag:"white_check_mark", prio:4});
@@ -512,26 +528,28 @@ function buildModel(fleet, D){
       feed.push({ts:p.created_at, c:"warn", repo:id, txt:`PR #${p.number} « ${p.title} » ouverte.`});
     }
 
-    // Crons : dernier run de chaque workflow planifié
+    // Crons : dernier run de chaque workflow planifié. `cron` garde le nom de fichier (.yml)
+    // pour filtrer les runs ; `cronName` est la version lisible affichée (sans extension).
     for(const cron of (fr.crons||[])){
       const wf = runs.filter(r=>(r.path||"").endsWith("/"+cron));
       const last = wf[0];
       if(!last) continue;
+      const cronName = cron.replace(/\.ya?ml$/i,"");
       seen(last.updated_at);
       if(last.conclusion==="failure"){
         const streak = wf.findIndex(r=>r.conclusion!=="failure");
         const n = streak===-1?wf.length:streak;
         bump("crit");
-        lines.push({c:"crit", t:`${cron} — ${n>1?n+" échecs consécutifs":"en échec"}`, small:timeAgo(last.updated_at), act:{id:"rerun", n:last.id, label:"Relancer"}});
-        attention.push({c:"crit", repo:id, t:`Le cron ${cron} échoue${n>1?" ×"+n:""}`, small:timeAgo(last.updated_at), verb:"Voir"});
-        next.push({c:"crit", t:`Le cron ${cron} échoue${n>1?` (×${n})`:""} — souvent un incident passager : relance-le d'abord`, act:{id:"rerun", n:last.id, label:"Relancer le cron"}});
-        feed.push({ts:last.updated_at, c:"crit", repo:id, txt:`${cron} en échec.`});
+        lines.push({c:"crit", t:`${cronName} — ${n>1?n+" échecs d'affilée":"en échec"}`, small:timeAgo(last.updated_at), act:{id:"rerun", n:last.id, label:"Relancer"}});
+        attention.push({c:"crit", repo:id, t:`L'automatisation « ${cronName} » a échoué${n>1?" ×"+n:""}`, small:timeAgo(last.updated_at), verb:"Voir"});
+        next.push({c:"crit", t:`L'automatisation « ${cronName} » a échoué${n>1?` (×${n})`:""} — souvent un incident passager : relance-la d'abord`, act:{id:"rerun", n:last.id, label:"Relancer"}});
+        feed.push({ts:last.updated_at, c:"crit", repo:id, txt:`${cronName} en échec.`});
       } else if(last.status!=="completed"){
         bump("info");
-        lines.push({c:"info", t:`${cron} — en cours`, small:timeAgo(last.updated_at)});
+        lines.push({c:"info", t:`${cronName} — en cours`, small:timeAgo(last.updated_at)});
       } else {
-        lines.push({c:"ok", t:`${cron} — OK`, small:timeAgo(last.updated_at)});
-        feed.push({ts:last.updated_at, c:"ok", repo:id, txt:`${cron} OK.`});
+        lines.push({c:"ok", t:`${cronName} — OK`, small:timeAgo(last.updated_at)});
+        feed.push({ts:last.updated_at, c:"ok", repo:id, txt:`${cronName} OK.`});
       }
     }
 
@@ -547,7 +565,9 @@ function buildModel(fleet, D){
 
     if(!lines.length) lines.push({c:"ok", t:"Rien en cours"});
     repos.push({
-      id, type: fr.type + (fr.kit_version?` · kit ${fr.kit_version}`:""), life, state,
+      // `type` = archétype du projet SEUL (cron-node, static…) : la version de kit (« kit 1.4.0 »)
+      // était du bruit technique dans l'interface (cartes, méta, sélecteur) — retirée (issue point 10).
+      id, type: fr.type||"", life, state,
       lines, next, last: lastTs?timeAgo(lastTs):"—", lastTs, pr, threadIssues, lastRun,
       notes: fr.notes||"", url:`https://github.com/${OWNER}/${id}`,
     });
@@ -613,12 +633,12 @@ function demoModel(){
   return {
     repos:[
       {id:"quiz-capitales", type:"cron-node", life:"actif", state:"crit", last:"il y a 40 min", url:"#",
-        next:[{c:"crit", t:"Le cron publish-shorts.yml échoue (×2) — souvent un incident passager : relance-le d'abord", act:{id:"demo", label:"Relancer le cron"}}],
-        lines:[L("crit","publish-shorts.yml — 2 échecs consécutifs","il y a 40 min",{id:"demo",label:"Relancer"}), L("ok","retry-reels.yml — OK","cette nuit")]},
-      {id:"bulletins-viz", type:"static · kit 1.0.0", life:"actif", state:"warn", last:"il y a 12 min", url:"#",
-        next:[{c:"warn", t:"Réponds à Claude sur « Moyenne pondérée par coefficient » — la session est en pause en attendant", act:{id:"open-thread", n:21, label:"Répondre ↓"}}],
-        lines:[L("info","Issue #18 « Export PDF » — session en cours","12 min",{id:"open-thread",n:18,label:"Suivre"}),
-               L("warn","Issue #21 « Moyenne pondérée par coefficient » — Claude attend ta réponse","il y a 25 min",{id:"open-thread",n:21,label:"Répondre"})],
+        next:[{c:"crit", t:"L'automatisation « publish-shorts » a échoué (×2) — souvent un incident passager : relance-la d'abord", act:{id:"demo", label:"Relancer"}}],
+        lines:[L("crit","publish-shorts — 2 échecs d'affilée","il y a 40 min",{id:"demo",label:"Relancer"}), L("ok","retry-reels — OK","cette nuit")]},
+      {id:"bulletins-viz", type:"static", life:"actif", state:"warn", last:"il y a 12 min", url:"#",
+        next:[{c:"warn", t:"Réponds à Claude sur « Moyenne pondérée par coefficient » — il attend ta réponse pour continuer", act:{id:"open-thread", n:21, label:"Répondre ↓"}}],
+        lines:[L("info","« Export PDF » — Claude travaille","12 min",{id:"open-thread",n:18,label:"Suivre"}),
+               L("warn","« Moyenne pondérée par coefficient » — Claude attend ta réponse","il y a 25 min",{id:"open-thread",n:21,label:"Répondre"})],
         lastRun:{id:1, name:"Export PDF — session #18", wf:"claude.yml", status:"in_progress",
           conclusion:null, running:true, url:"#", started:new Date(Date.now()-4*60000).toISOString()},
         demoJobs:[{name:"claude", status:"in_progress", conclusion:null, steps:[
@@ -630,7 +650,7 @@ function demoModel(){
           {number:6,name:"Ouverture de la PR",status:"queued",conclusion:null}]}],
         threadIssues:[
           {num:18, title:"Export PDF", body:"Ajouter un bouton pour exporter le bulletin courant en PDF.\n\n_Créée depuis FleetView._",
-           status:{phase:"session", c:"info", label:"session en cours", hint:"Claude travaille — rien à faire pour l'instant, le journal du run défile plus bas."},
+           status:{phase:"session", c:"info", label:"Claude travaille", hint:"Claude est au travail — rien à faire pour l'instant, son avancement défile plus bas."},
            comments:[
             {user:{login:OWNER}, body:"Ajouter un bouton pour exporter le bulletin courant en PDF."},
             {user:{login:"claude[bot]"}, body:"## Spécification\n\n**Objectif** : bouton « Exporter en PDF » dans la barre du bulletin.\n\n- Rendu client via `window.print` + feuille `@media print` dédiée — aucune dépendance\n- Critères de done :\n- [x] le PDF reprend le graphe et le tableau\n- [ ] sans la navigation\n\nJ'enchaîne l'implémentation."},
@@ -646,12 +666,12 @@ function demoModel(){
         ]},
       {id:"talk-show-oral", type:"service-node", life:"actif", state:"warn", last:"hier", url:"#",
         next:[{c:"warn", t:"La PR #15 « Lecture audio iOS » est prête (tests verts) — merger, ou demander des changements", act:{id:"open-pr", n:15, label:"Décider ↓"}}],
-        pr:{num:15,title:"Lecture audio iOS",checks:"checks ✓ 3/3",files:4,add:118,del:22,body:"Débloque l'AudioContext au premier geste utilisateur. Résout l'issue #12."},
-        lines:[L("warn","PR #15 « Lecture audio iOS » — checks ✓, attend ta décision","depuis 15 h",{id:"open-pr",n:15,label:"Examiner"})]},
+        pr:{num:15,title:"Lecture audio iOS",checks:"tests ✓ 3/3",files:4,add:118,del:22,body:"Débloque l'AudioContext au premier geste utilisateur. Résout l'issue #12."},
+        lines:[L("warn","PR #15 « Lecture audio iOS » — tests ✓, attend ta décision","depuis 15 h",{id:"open-pr",n:15,label:"Examiner"})]},
       {id:"veille-emploi", type:"cron-python", life:"actif", state:"calm", last:"07:05", url:"#",
-        lines:[L("ok","veille.yml — OK","ce matin")]},
+        lines:[L("ok","veille — OK","ce matin")]},
       {id:"digest-hebdo", type:"cron-python", life:"veille", state:"calm", last:"lundi", url:"#",
-        lines:[L("ok","Dev en pause · weekly-digest.yml surveillé")]},
+        lines:[L("ok","Dev en pause · weekly-digest surveillé")]},
     ],
     ideas:[
       {num:1,p:"P1",repo:"quiz-capitales",t:"Miniatures automatiques pour les shorts",desc:"Générer la miniature depuis la première question du quiz, avec le drapeau en fond.",cat:"feature",url:"#"},
@@ -664,13 +684,13 @@ function demoModel(){
     ],
     attention:[
       {c:"crit",repo:"quiz-capitales",t:"Le cron publish-shorts échoue ×2",small:"il y a 40 min",verb:"Voir"},
-      {c:"warn",repo:"bulletins-viz",t:"Claude te pose une question sur « Moyenne pondérée par coefficient »",small:"il y a 25 min",verb:"Répondre"},
+      {c:"warn",repo:"bulletins-viz",t:"Claude te pose une question sur « Moyenne pondérée par coefficient »",small:"il y a 25 min",thread:21,verb:"Répondre"},
       {c:"warn",repo:"codex",t:"Le cadrage te pose une question sur « Rendre les bulletins plus lisibles »",small:"il y a 1 h",idea:2,verb:"Répondre"},
-      {c:"warn",repo:"talk-show-oral",t:"La PR #15 est prête (tests verts)",small:"depuis 15 h",verb:"Décider"},
+      {c:"warn",repo:"talk-show-oral",t:"La PR #15 est prête (tests verts)",small:"depuis 15 h",pr:15,verb:"Décider"},
     ],
     feed:[
       {ts:new Date().toISOString(),c:"ok",repo:"bulletins-viz",txt:"PR #17 self-heal mergée."},
-      {ts:new Date(Date.now()-3.6e6).toISOString(),c:"crit",repo:"quiz-capitales",txt:"publish-shorts.yml en échec."},
+      {ts:new Date(Date.now()-3.6e6).toISOString(),c:"crit",repo:"quiz-capitales",txt:"publish-shorts en échec."},
       {ts:new Date(Date.now()-86400e3).toISOString(),c:"warn",repo:"talk-show-oral",txt:"PR #15 ouverte par la session Actions."},
     ],
   };
@@ -700,7 +720,7 @@ function renderAttention(){
       <span class="repo-name">${esc(x.repo)}</span>
       <span class="txt">${esc(x.t)}${x.small?` <span class="marginalia">· ${esc(x.small)}</span>`:""}</span>
       ${x.idea?`<button class="btn-mini" data-open-idea="${x.idea}">${esc(x.verb||"Répondre")}</button>`
-              :`<button class="btn-mini" data-open="${esc(x.repo)}">${esc(x.verb||"Examiner")}</button>`}
+              :`<button class="btn-mini" data-open="${esc(x.repo)}"${x.thread?` data-thread="${x.thread}"`:""}${x.pr?` data-pr="${x.pr}"`:""}>${esc(x.verb||"Examiner")}</button>`}
     </div>`).join("");
 }
 function renderFilters(){
@@ -1025,7 +1045,7 @@ function renderDetail(){
   const relatedFeed=model.feed.filter(f=>f.repo===r.id).slice(0,5);
 
   const prBlock=r.pr?`
-    <div class="block">
+    <div class="block" data-pr-block>
       <div class="block-head">
         <span class="eyebrow">Pull request #${r.pr.num} — ${esc(r.pr.title)}</span>
         <span class="pr-stats num">${esc(r.pr.checks)} · ${r.pr.files} fichiers · <span class="add">+${r.pr.add}</span> <span class="del">−${r.pr.del}</span></span>
@@ -1075,9 +1095,10 @@ function renderDetail(){
     return `
     <div class="block thread-block${big?" full":""}" data-thread="${th.num}">
       <div class="block-head">
-        <span class="eyebrow">Dialogue — issue #${th.num} « ${esc(th.title)} »</span>
+        <span class="eyebrow">Dialogue #${th.num} — « ${esc(th.title)} »</span>
         ${st?`<span class="pill" style="--c:var(--${st.c})">${esc(st.label)}</span>`:""}
-        <button class="btn-mini${big?" on":""}" data-act="thread-big" data-n="${th.num}">${big?"✕ Fermer":"⛶ Plein écran"}</button>
+        <button class="btn-mini${big?" on":""}" data-act="thread-big" data-n="${th.num}">${big?"↙ Réduire":"⛶ Plein écran"}</button>
+        <button class="btn-mini" data-act="thread-close" data-n="${th.num}" title="Clore cette discussion et la classer sans suite">✕ Clore</button>
       </div>
       ${st?`<p class="thread-hint">${esc(st.hint)}</p>`:""}
       ${threadBar}
@@ -1330,6 +1351,19 @@ async function closeAnchor(repo,num){
   await gh(`/repos/${OWNER}/${repo}/issues/${num}`,
     {method:"PATCH",body:{state:"closed",state_reason:"not_planned"}});
   toast(`✓ Ancrage #${num} clos — ce repo est de nouveau disponible pour une session.`);
+}
+// Clôture d'un fil de dialogue à la demande (issue #60 : une discussion qui n'a plus lieu
+// d'être — mauvais repo, question sans objet, session à l'arrêt — doit pouvoir se classer
+// sans passer par GitHub). Même logique que closeAnchor : commentaire de trace puis fermeture
+// `not_planned` (rien n'a abouti). Marche quelle que soit la phase du fil (question, session,
+// muette…), pas seulement quand Claude attend une réponse.
+async function closeThread(repo,num){
+  if(demo){ toast("Mode démo — rien n'est envoyé. En réel : la discussion se clôt et le projet redevient disponible."); return; }
+  await gh(`/repos/${OWNER}/${repo}/issues/${num}/comments`,
+    {method:"POST",body:{body:"→ discussion close depuis FleetView : classée sans suite."}});
+  await gh(`/repos/${OWNER}/${repo}/issues/${num}`,
+    {method:"PATCH",body:{state:"closed",state_reason:"not_planned"}});
+  toast(`✓ Discussion close — ce projet est de nouveau disponible pour une session.`);
 }
 async function mergePr(repo,num){
   if(demo){ toast("Mode démo — rien n'est envoyé."); return; }
@@ -1735,19 +1769,28 @@ async function nativeNotify(ev){
   }catch(e){}
   try{ new Notification(ev.title, opts); return true; }catch(e){ return false; }
 }
+let notifPrimed=false; // false jusqu'au 1er relevé après ouverture (cf. runPush)
 async function runPush(){
-  if(demo || !model || !model.notify || !model.notify.length) return;
+  if(demo || !model || !model.notify) return;
   const wantNative = store.notif==="on" && "Notification" in window && Notification.permission==="granted";
   const url=store.ntfy;
   if(!wantNative && !url) return;
+  // À l'OUVERTURE de l'app, on cale sur l'existant sans notifier : les événements déjà là ont
+  // été couverts « app fermée » par le veilleur (ntfy) — les re-notifier en natif produisait le
+  // doublon « les deux en même temps quand j'ouvre l'app ». Le natif ne sert donc qu'aux
+  // événements qui APPARAISSENT app ouverte ; l'app fermée reste le rôle du veilleur.
+  if(!notifPrimed){ notifPrimed=true; seedNotified(); return; }
+  if(!model.notify.length) return;
   const seen=loadNotified(); let changed=false;
   for(const ev of model.notify){
     if(seen.has(ev.key)) continue;
-    // Marquer « vu » seulement si AU MOINS un canal a livré : sinon un échec réseau ntfy
-    // avalait la notification pour toujours — là, on retente au prochain relevé.
+    // UN SEUL canal par événement : le natif (app ouverte) est prioritaire, ntfy-in-app ne
+    // prend le relais que si le natif n'est pas actif — sinon la même alerte partait DEUX fois
+    // (native + ntfy). Marquer « vu » seulement si un canal a livré : sinon un échec réseau
+    // avalait la notification pour toujours, là on retente au prochain relevé.
     let delivered=false;
     if(wantNative){ try{ delivered=await nativeNotify(ev); }catch(e){} }
-    if(url){ try{ await publishNtfy(url, ev); delivered=true; }catch(e){ /* réseau : on ne bloque pas le relevé */ } }
+    if(!delivered && url){ try{ await publishNtfy(url, ev); delivered=true; }catch(e){ /* réseau : on ne bloque pas le relevé */ } }
     if(delivered){ seen.add(ev.key); changed=true; }
   }
   if(changed) saveNotified(seen);
@@ -1864,7 +1907,7 @@ function openModal(opts){
   if(!model){ toast("Le premier relevé n'est pas terminé — réessaie dans un instant."); return; }
   const sel=$("#f-repo");
   sel.innerHTML=`<option value="flotte">flotte (claude-ops)</option>`+
-    model.repos.filter(r=>r.life!=="archive").map(r=>`<option value="${esc(r.id)}"${r.id===opts.repo?" selected":""}>${esc(r.id)} — ${esc(r.type)}</option>`).join("");
+    model.repos.filter(r=>r.life!=="archive").map(r=>`<option value="${esc(r.id)}"${r.id===opts.repo?" selected":""}>${esc(r.id)}</option>`).join("");
   $("#form-new").reset();
   if(opts.repo) sel.value=opts.repo;
   $("#f-title").value=opts.title||"";
@@ -1876,6 +1919,7 @@ function openModal(opts){
   $("#modal-title").textContent=opts.title?"Lancer cette tâche":(parcours==="box"?"Nouvelle idée":"Nouvelle demande");
   $("#opt-box").style.display=opts.hideBox?"none":"";
   $("#modal-note").textContent=demo?"Mode démo : aucune action réelle.":"";
+  resetSendConfirm(); // pas de confirmation « bon repo » en attente d'une session précédente
   syncWhen();
   modal.showModal();
   setTimeout(()=>$(opts.title?"#f-desc":"#f-title").focus(),50);
@@ -1891,7 +1935,10 @@ function syncWhen(){
 
 /* ================= Événements ================= */
 // Ouvre la vue projet d'un repo (depuis « À traiter », une carte, ou un bouton de ligne).
-function openDetail(id){
+// `focus` (optionnel) amène DIRECTEMENT sur ce qui attend : {thread:n, reply:true} pour un fil
+// de dialogue (défilé sur le dernier message, la question, champ prêt), {pr:true} pour la PR.
+// Sans focus, on ouvre en haut de la vue (parcours « je regarde ce projet »).
+function openDetail(id, focus){
   if(!model || !model.repos.some(x=>x.id===id)) return;
   if(ui.openRepo!==id){
     if(!ui.openRepo) ui.scrollY=window.scrollY; // position dans l'atelier, restaurée au retour
@@ -1899,7 +1946,33 @@ function openDetail(id){
   }
   document.body.dataset.tab="flotte";
   document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab==="flotte")));
-  renderDetail(); window.scrollTo({top:0}); syncUrl();
+  renderDetail();
+  if(focus && focus.thread!=null) focusThread(focus.thread, focus.reply);
+  else if(focus && focus.pr) focusPr();
+  else window.scrollTo({top:0});
+  syncUrl();
+}
+// Amène sur UN fil précis et le met en évidence : c'est le geste « Répondre » d'« À traiter »
+// et de « Que faire ? ». On défile le fil sur son DERNIER message (la question de Claude) —
+// fini le passage obligé par « ↧ Dernier » — et on met le bloc en surbrillance pour qu'on
+// sache exactement sur quelle tâche on est (le reproche « je me perds entre les tâches »).
+function focusThread(num, reply){
+  const block=document.querySelector(`.thread-block[data-thread="${num}"]`);
+  if(!block){ window.scrollTo({top:0}); return; }
+  block.scrollIntoView({block:"start"});
+  const thread=block.querySelector(".thread");
+  if(thread) thread.scrollTop=thread.scrollHeight; // dernier message (la question) visible d'emblée
+  block.classList.remove("flash"); void block.offsetWidth; block.classList.add("flash"); // (re)déclenche l'animation
+  setTimeout(()=>block.classList.remove("flash"), 1900);
+  if(reply){ const ta=block.querySelector(".reply textarea"); if(ta){ try{ ta.focus({preventScroll:true}); }catch(_){ ta.focus(); } } }
+}
+// Amène sur le bloc Pull request et le met en évidence (geste « Décider » / « Examiner »).
+function focusPr(){
+  const block=document.querySelector("#view-detail [data-pr-block]");
+  if(!block){ window.scrollTo({top:0}); return; }
+  block.scrollIntoView({block:"start"});
+  block.classList.remove("flash"); void block.offsetWidth; block.classList.add("flash");
+  setTimeout(()=>block.classList.remove("flash"), 1900);
 }
 // Ouvre le codex directement sur une idée (depuis « À traiter » ou une notification ?idea=).
 function openIdea(num){
@@ -1935,7 +2008,13 @@ document.addEventListener("click",async(e)=>{
       syncUrl();
       return;
     }
-    if(b.dataset.open!==undefined){ openDetail(b.dataset.open); return; }
+    if(b.dataset.open!==undefined){
+      // « À traiter » cible désormais directement le fil (data-thread) ou la PR (data-pr)
+      // concernés — un seul geste mène au bon endroit, plus au sommet d'un projet à fouiller.
+      const focus = (b.dataset.thread!==undefined&&b.dataset.thread!=="") ? {thread:Number(b.dataset.thread), reply:true}
+        : (b.dataset.pr!==undefined&&b.dataset.pr!=="") ? {pr:true} : null;
+      openDetail(b.dataset.open, focus); return;
+    }
     if(b.dataset.newfor!==undefined){ openModal({repo:b.dataset.newfor}); return; }
     // 🪶 Cadrer : présent au codex ET dans la vue projet (« Au codex pour ce projet »),
     // d'où ce handler global — l'écouteur du panneau #ideas ne le gère pas (pas de doublon).
@@ -2003,10 +2082,8 @@ document.addEventListener("click",async(e)=>{
         switch(b.dataset.act){
           case "back": ui.openRepo=null; ui.threadBig=null; renderDetail();
             window.scrollTo({top:ui.scrollY||0}); ui.scrollY=0; syncUrl(); break;
-          case "open-thread": if(r){ openDetail(r.id); // le fil est dans la vue projet
-            const tb=document.querySelector(`.thread-block[data-thread="${n}"]`);
-            if(tb) tb.scrollIntoView({block:"start"}); } break;
-          case "open-pr": if(r) openDetail(r.id); break;     // le bloc PR aussi
+          case "open-thread": if(r) openDetail(r.id, {thread:Number(n), reply:true}); break; // droit au fil, sur la question, champ prêt
+          case "open-pr": if(r) openDetail(r.id, {pr:true}); break;                          // droit au bloc PR
           case "gh-issue": if(r) window.open(`${r.url}/issues/${n}`,"_blank"); break;
           case "merge": if(r){ b.disabled=true; await mergePr(r.id,n); await refresh(); } break;
           case "pr-comment": $("#pr-reply").hidden=false; $("#pr-reply-text").focus(); break;
@@ -2025,6 +2102,9 @@ document.addEventListener("click",async(e)=>{
           case "relabel": if(r){ b.disabled=true;
             await sendComment(r.id,n,"la session ne semble pas avoir abouti — reprends cette issue depuis le début."); await refresh(); } break;
           case "close-anchor": if(r){ b.disabled=true; await closeAnchor(r.id,n); await refresh(); } break;
+          case "thread-close": if(r){ if(!confirm("Clore cette discussion ? Elle sera classée « sans suite » et disparaîtra de tes tâches.")) break;
+            b.disabled=true; if(ui.threadBig===Number(n)) ui.threadBig=null;
+            await closeThread(r.id,n); await refresh(); } break;
           case "life": if(r){ b.disabled=true; await setLifecycle(r.id,n);
             if(n==="archivé") ui.openRepo=null; await refresh(); } break;
           case "run-follow": if(r&&r.lastRun) startJournal(r.id, r.lastRun.id, $("#run-journal"), demo?r.demoJobs:null); break;
@@ -2056,29 +2136,84 @@ document.addEventListener("keydown",(e)=>{
   }
 });
 
-// La modale ne se ferme qu'en cas de SUCCÈS : avant, method="dialog" la fermait dès le
-// submit et un échec API (422, réseau…) emportait tout ce qui avait été saisi.
-$("#form-new").addEventListener("submit",async(e)=>{
-  e.preventDefault();
-  const title=$("#f-title").value.trim();
-  if(!title){ $("#f-title").focus(); return; }
-  const repo=$("#f-repo").value;
-  const desc=$("#f-desc").value.trim();
-  const mode=document.querySelector('input[name="f-when"]:checked').value;
-  // Parcours cloud : on ne crée pas d'issue — on compose le prompt, on copie, on ouvre claude.ai/code.
-  // (Doit rester dans le geste de submit pour l'écriture presse-papier et l'ouverture d'onglet.)
-  if(mode==="cloud"){ launchCloud({repo,title,desc}); modal.close(); return; }
-  const modelChoice=document.querySelector('input[name="f-model"]:checked').value;
-  const prio=document.querySelector('input[name="f-prio"]:checked').value;
-  const cat=$("#f-cat").value;
-  const btn=$("#f-submit");
-  btn.disabled=true; btn.textContent="Envoi…";
+// ===== Garde-fou « bon repo » (issue point 9) =====
+// Trop de demandes partaient dans le mauvais projet. Avant de LANCER (issue directe / session
+// cloud), on confirme la destination en clair ; et si le titre/les détails nomment un AUTRE
+// projet connu, on le signale avec un bouton pour basculer. Le codex (simple note, projet
+// modifiable ensuite) ne s'interrompt que si un autre projet est détecté — pas à chaque idée.
+let sendCtx=null;
+function repoLabel(r){ return r==="flotte" ? "flotte (réglages communs)" : r; }
+function detectOtherRepo(repo, title, desc){
+  if(!model) return null;
+  const hay=(" "+title+" "+desc+" ").toLowerCase();
+  return model.repos.filter(r=>r.life!=="archive").map(r=>r.id).find(n=>{
+    if(n===repo || n.length<4) return false;
+    const rx=n.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g,"\\$&"); // frontière non-alphanumérique
+    return new RegExp(`[^a-z0-9]${rx}[^a-z0-9]`).test(hay);         // (pas au milieu d'un mot)
+  }) || null;
+}
+async function doSend(ctx){
+  // Parcours cloud : on ne crée pas d'issue ici — launchCloud compose le prompt, ancre la tâche
+  // et relaie par la modale « Copier et ouvrir » (le geste de copie/ouverture y reste synchrone).
+  if(ctx.mode==="cloud"){ launchCloud({repo:ctx.repo,title:ctx.title,desc:ctx.desc}); modal.close(); return; }
+  const btn=$("#f-submit"); btn.disabled=true; btn.textContent="Envoi…";
   try{
-    await createRequest({repo,title,desc,mode,modelChoice,prio,cat});
+    await createRequest({repo:ctx.repo,title:ctx.title,desc:ctx.desc,mode:ctx.mode,modelChoice:ctx.modelChoice,prio:ctx.prio,cat:ctx.cat});
     modal.close();
     await refresh(false);
   }catch(err){ toast("Échec : "+errMsg(err), 6000); }
   finally{ btn.disabled=false; syncWhen(); }
+}
+function resetSendConfirm(){
+  const el=$("#send-confirm"); if(el) el.hidden=true;
+  sendCtx=null;
+  const btn=$("#f-submit"); if(btn) btn.disabled=false;
+}
+function showRepoConfirm(ctx){
+  sendCtx=ctx;
+  const other=detectOtherRepo(ctx.repo, ctx.title, ctx.desc);
+  const el=$("#send-confirm"), msg=$("#send-confirm-msg"), acts=$("#send-confirm-actions");
+  if(!el||!msg||!acts){ doSend(ctx); return; } // repli : pas de barre → on envoie
+  // Le titre (y compris résumé auto) est rappelé ici : on confirme d'un coup le QUOI et le OÙ.
+  msg.innerHTML = other
+    ? `⚠️ « <b>${esc(ctx.title)}</b> » mentionne « <b>${esc(other)}</b> », mais partirait vers « <b>${esc(repoLabel(ctx.repo))}</b> ». C'est bien le bon projet ?`
+    : `« <b>${esc(ctx.title)}</b> » va partir vers le projet « <b>${esc(repoLabel(ctx.repo))}</b> ». C'est bien lui ?`;
+  acts.innerHTML =
+    `<button type="button" class="btn btn-primary" data-send-yes>✓ Oui, vers « ${esc(ctx.repo)} »</button>`+
+    (other?`<button type="button" class="btn" data-send-switch="${esc(other)}">→ Plutôt « ${esc(other)} »</button>`:"")+
+    `<button type="button" class="btn" data-send-change>Changer de projet…</button>`;
+  el.hidden=false;
+  const btn=$("#f-submit"); if(btn) btn.disabled=true; // le choix se fait dans la barre
+  el.scrollIntoView({block:"nearest"});
+}
+$("#send-confirm").addEventListener("click",(e)=>{
+  const b=e.target.closest("button"); if(!b || !sendCtx) return;
+  const ctx=sendCtx;
+  if(b.hasAttribute("data-send-yes")){ resetSendConfirm(); doSend(ctx); }
+  else if(b.hasAttribute("data-send-switch")){ const to=b.getAttribute("data-send-switch"); $("#f-repo").value=to; resetSendConfirm(); doSend({...ctx, repo:to}); }
+  else if(b.hasAttribute("data-send-change")){ resetSendConfirm(); $("#f-repo").focus(); }
+});
+// Éditer un champ (ou changer de projet/parcours) invalide une confirmation en attente.
+$("#form-new").addEventListener("input",resetSendConfirm);
+
+// La modale ne se ferme qu'en cas de SUCCÈS : avant, method="dialog" la fermait dès le
+// submit et un échec API (422, réseau…) emportait tout ce qui avait été saisi.
+$("#form-new").addEventListener("submit",(e)=>{
+  e.preventDefault();
+  const repo=$("#f-repo").value;
+  const desc=$("#f-desc").value.trim();
+  // Titre optionnel : laissé vide, on le résume depuis les détails (issue point 11).
+  let title=$("#f-title").value.trim();
+  if(!title) title=summarizeTitle(desc);
+  if(!title){ toast("Ajoute un titre, ou au moins quelques détails à résumer."); $("#f-desc").focus(); return; }
+  const mode=document.querySelector('input[name="f-when"]:checked').value;
+  const modelChoice=document.querySelector('input[name="f-model"]:checked').value;
+  const prio=document.querySelector('input[name="f-prio"]:checked').value;
+  const cat=$("#f-cat").value;
+  const ctx={repo,title,desc,mode,modelChoice,prio,cat};
+  // Codex sans autre projet mentionné : envoi direct (faible enjeu). Sinon : garde-fou.
+  if(mode==="box" && !detectOtherRepo(repo,title,desc)){ doSend(ctx); return; }
+  showRepoConfirm(ctx);
 });
 document.querySelectorAll('input[name="f-when"]').forEach(x=>x.addEventListener("change",syncWhen));
 // Échap / geste retour Android fermait la modale en emportant la saisie (dictée comprise) :
@@ -2179,6 +2314,18 @@ $("#ideas").addEventListener("keydown",(e)=>{
   // un seul mot reconnu. 8 s : au-dessus des 5 s demandées, sans laisser le micro ouvert
   // indéfiniment en cas d'oubli. L'arrêt manuel (2e appui) reste prioritaire à tout moment.
   const SILENCE_MS=8000;
+  // Cœur de l'anti-répétition, isolé en fonctions PURES (testées par scripts/verify.mjs).
+  // micFinals : recompose le texte finalisé d'un run à partir de TOUT `results` — jamais un
+  // append incrémental, donc un segment ré-émis par Android n'est pas rejoué. micJoin :
+  // assemble morceaux non vides avec une espace. Ensemble, ils rendent l'écriture idempotente.
+  function micJoin(){ return [...arguments].map(s=>String(s||"").trim()).filter(Boolean).join(" "); }
+  function micFinals(results){
+    const finals=[];
+    for(let i=0;i<results.length;i++){
+      if(results[i] && results[i].isFinal){ const t=String(results[i][0].transcript).trim(); if(t) finals.push(t); }
+    }
+    return finals.join(" ");
+  }
   let rec=null, activeBtn=null, micGranted=false, wantStop=false, silence=null;
   function clearSilence(){ if(silence){ clearTimeout(silence); silence=null; } }
   // Ré-armé à chaque mot reconnu : le compte à rebours ne court que sur du silence réel.
@@ -2207,27 +2354,35 @@ $("#ideas").addEventListener("keydown",(e)=>{
     if(!target) return;
     if(!(await ensureMic())) return;
     const interimEl=btn.dataset.micInterim?document.querySelector(btn.dataset.micInterim):null;
-    let base=target.value;
+    // Texte DÉJÀ acquis : le contenu du champ au démarrage, augmenté du finalisé des runs
+    // précédents (Chrome relance la reconnaissance de lui-même, cf. l'événement `end`).
+    let committed=target.value;
+    // Texte finalisé du run EN COURS. Recalculé À CHAQUE événement par micFinals() depuis TOUT
+    // `ev.results` (jamais accumulé depuis `resultIndex`) : c'était LA cause des mots répétés
+    // en cascade (« le / le micro / le micro de… », issue #59). Sur Android, un segment déjà
+    // finalisé est ré-émis dans les événements suivants ; l'ancien code, qui ajoutait à chaque
+    // fois, le rejouait. Recomposer tout le run rend l'écriture idempotente.
+    let runFinal="";
     const r=new Ctor();
     // `continuous=true` : ne pas rendre la main au premier blanc — c'est nous qui décidons
     // quand la dictée s'arrête (timer de silence ci-dessus ou 2e appui sur le bouton).
     r.lang="fr-FR"; r.interimResults=true; r.continuous=true;
     r.addEventListener("result",(ev)=>{
+      runFinal=micFinals(ev.results);           // recomposé, pas accumulé
+      target.value=micJoin(committed, runFinal);
       let interim="";
-      for(let i=ev.resultIndex;i<ev.results.length;i++){
-        const res=ev.results[i];
-        if(res.isFinal){
-          const t=res[0].transcript.trim();
-          if(t){ base = base ? (base+" "+t) : t; target.value=base; }
-        } else interim+=res[0].transcript;
-      }
+      for(let i=0;i<ev.results.length;i++){ if(!ev.results[i].isFinal) interim+=ev.results[i][0].transcript; }
       if(interimEl){
-        if(interim){ interimEl.textContent=interim; interimEl.hidden=false; }
+        if(interim.trim()){ interimEl.textContent=interim; interimEl.hidden=false; }
         else { interimEl.hidden=true; interimEl.textContent=""; }
       }
       armSilence(); // on parle : le compte à rebours repart de zéro
     });
     r.addEventListener("end",()=>{
+      // Committer le finalisé de CE run AVANT toute relance : le prochain run repart avec un
+      // `ev.results` vide, `committed` doit donc déjà porter ce qu'on vient de dire — sinon on
+      // le perdrait, ou (pire) on le rejouerait. C'est le pendant « inter-runs » de l'idempotence.
+      if(runFinal.trim()){ committed=micJoin(committed, runFinal); runFinal=""; }
       // Chrome termine la reconnaissance de lui-même (blanc court, `no-speech`, plafond de
       // durée) MÊME en `continuous` — c'est la vraie raison des coupures en pleine réflexion.
       // Tant que l'arrêt n'a pas été demandé, on relance donc en silence : c'est ce qui fait
@@ -2292,8 +2447,12 @@ async function refreshVeilleurStatus(){
     }
     const r=await gh(`/repos/${OWNER}/fleetview/actions/workflows/veilleur.yml/runs?per_page=1`);
     const run=(r.workflow_runs||[])[0];
-    if(!run){ el.textContent="○ pas encore de passage — le cron tourne toutes les 15 min"; return; }
-    el.textContent=(run.conclusion==="success"?"✓ actif":"⚠ dernier passage en échec")+" · "+timeAgo(run.run_started_at||run.created_at);
+    const active = run && run.conclusion==="success";
+    let txt = !run ? "○ pas encore de passage — le cron tourne toutes les 15 min"
+      : (active?"✓ actif":"⚠ dernier passage en échec")+" · "+timeAgo(run.run_started_at||run.created_at);
+    // Veilleur actif + champ ntfy rempli = la source du doublon signalé : on le dit sur place.
+    if(active && store.ntfy) txt += " · ⚠ champ ntfy ci-dessus rempli → doublon probable, vide-le";
+    el.textContent=txt;
   }catch(e){ el.textContent="état inconnu ("+errMsg(e)+")"; }
 }
 $("#btn-settings").addEventListener("click",()=>{
