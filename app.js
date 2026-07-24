@@ -182,6 +182,22 @@ function parseOptions(body){
 // Libellé court d'une option pour un bouton (sans balisage markdown).
 function optLabel(t){ const s=String(t).replace(/\*\*|`/g,""); return s.length>64?s.slice(0,62)+"…":s; }
 
+// Titre de secours quand on ne l'a pas saisi (issue point 11 : « je mette juste la description »).
+// Pas de vrai résumé côté navigateur (aucun modèle à l'exécution) : on prend une amorce PROPRE
+// des détails — 1re phrase si elle est courte, sinon le début coupé à ~70 caractères sur une
+// frontière de mot, 1re lettre capitalisée, sans ponctuation finale. Suffisant pour un titre
+// d'issue lisible ; la vraie mise au propre se fait dans la session de toute façon. Fonction
+// PURE (testée par scripts/verify.mjs, checkTitle).
+function summarizeTitle(desc){
+  let s=String(desc||"").replace(/\s+/g," ").trim();
+  if(!s) return "";
+  const m=s.match(/^(.+?[.!?…])(?:\s|$)/); // 1re phrase, si terminateur trouvé
+  if(m && m[1].length<=80) s=m[1];
+  s=s.replace(/[\s.!?…,;:]+$/,"");         // ponctuation/espaces de fin
+  if(s.length>70) s=s.slice(0,70).replace(/\s+\S*$/,"").trim()+"…";
+  return s ? s.charAt(0).toUpperCase()+s.slice(1) : "";
+}
+
 // Frontière de confiance : seuls les BOTS parlent au nom de Claude (github-actions[bot],
 // claude[bot]…). Sur un repo public, n'importe qui peut commenter une issue — un tiers ne
 // doit ni s'afficher « Claude », ni produire des boutons de réponse en un clic.
@@ -549,7 +565,9 @@ function buildModel(fleet, D){
 
     if(!lines.length) lines.push({c:"ok", t:"Rien en cours"});
     repos.push({
-      id, type: fr.type + (fr.kit_version?` · kit ${fr.kit_version}`:""), life, state,
+      // `type` = archétype du projet SEUL (cron-node, static…) : la version de kit (« kit 1.4.0 »)
+      // était du bruit technique dans l'interface (cartes, méta, sélecteur) — retirée (issue point 10).
+      id, type: fr.type||"", life, state,
       lines, next, last: lastTs?timeAgo(lastTs):"—", lastTs, pr, threadIssues, lastRun,
       notes: fr.notes||"", url:`https://github.com/${OWNER}/${id}`,
     });
@@ -617,7 +635,7 @@ function demoModel(){
       {id:"quiz-capitales", type:"cron-node", life:"actif", state:"crit", last:"il y a 40 min", url:"#",
         next:[{c:"crit", t:"L'automatisation « publish-shorts » a échoué (×2) — souvent un incident passager : relance-la d'abord", act:{id:"demo", label:"Relancer"}}],
         lines:[L("crit","publish-shorts — 2 échecs d'affilée","il y a 40 min",{id:"demo",label:"Relancer"}), L("ok","retry-reels — OK","cette nuit")]},
-      {id:"bulletins-viz", type:"static · kit 1.0.0", life:"actif", state:"warn", last:"il y a 12 min", url:"#",
+      {id:"bulletins-viz", type:"static", life:"actif", state:"warn", last:"il y a 12 min", url:"#",
         next:[{c:"warn", t:"Réponds à Claude sur « Moyenne pondérée par coefficient » — il attend ta réponse pour continuer", act:{id:"open-thread", n:21, label:"Répondre ↓"}}],
         lines:[L("info","« Export PDF » — Claude travaille","12 min",{id:"open-thread",n:18,label:"Suivre"}),
                L("warn","« Moyenne pondérée par coefficient » — Claude attend ta réponse","il y a 25 min",{id:"open-thread",n:21,label:"Répondre"})],
@@ -1889,7 +1907,7 @@ function openModal(opts){
   if(!model){ toast("Le premier relevé n'est pas terminé — réessaie dans un instant."); return; }
   const sel=$("#f-repo");
   sel.innerHTML=`<option value="flotte">flotte (claude-ops)</option>`+
-    model.repos.filter(r=>r.life!=="archive").map(r=>`<option value="${esc(r.id)}"${r.id===opts.repo?" selected":""}>${esc(r.id)} — ${esc(r.type)}</option>`).join("");
+    model.repos.filter(r=>r.life!=="archive").map(r=>`<option value="${esc(r.id)}"${r.id===opts.repo?" selected":""}>${esc(r.id)}</option>`).join("");
   $("#form-new").reset();
   if(opts.repo) sel.value=opts.repo;
   $("#f-title").value=opts.title||"";
@@ -1901,6 +1919,7 @@ function openModal(opts){
   $("#modal-title").textContent=opts.title?"Lancer cette tâche":(parcours==="box"?"Nouvelle idée":"Nouvelle demande");
   $("#opt-box").style.display=opts.hideBox?"none":"";
   $("#modal-note").textContent=demo?"Mode démo : aucune action réelle.":"";
+  resetSendConfirm(); // pas de confirmation « bon repo » en attente d'une session précédente
   syncWhen();
   modal.showModal();
   setTimeout(()=>$(opts.title?"#f-desc":"#f-title").focus(),50);
@@ -2117,29 +2136,84 @@ document.addEventListener("keydown",(e)=>{
   }
 });
 
-// La modale ne se ferme qu'en cas de SUCCÈS : avant, method="dialog" la fermait dès le
-// submit et un échec API (422, réseau…) emportait tout ce qui avait été saisi.
-$("#form-new").addEventListener("submit",async(e)=>{
-  e.preventDefault();
-  const title=$("#f-title").value.trim();
-  if(!title){ $("#f-title").focus(); return; }
-  const repo=$("#f-repo").value;
-  const desc=$("#f-desc").value.trim();
-  const mode=document.querySelector('input[name="f-when"]:checked').value;
-  // Parcours cloud : on ne crée pas d'issue — on compose le prompt, on copie, on ouvre claude.ai/code.
-  // (Doit rester dans le geste de submit pour l'écriture presse-papier et l'ouverture d'onglet.)
-  if(mode==="cloud"){ launchCloud({repo,title,desc}); modal.close(); return; }
-  const modelChoice=document.querySelector('input[name="f-model"]:checked').value;
-  const prio=document.querySelector('input[name="f-prio"]:checked').value;
-  const cat=$("#f-cat").value;
-  const btn=$("#f-submit");
-  btn.disabled=true; btn.textContent="Envoi…";
+// ===== Garde-fou « bon repo » (issue point 9) =====
+// Trop de demandes partaient dans le mauvais projet. Avant de LANCER (issue directe / session
+// cloud), on confirme la destination en clair ; et si le titre/les détails nomment un AUTRE
+// projet connu, on le signale avec un bouton pour basculer. Le codex (simple note, projet
+// modifiable ensuite) ne s'interrompt que si un autre projet est détecté — pas à chaque idée.
+let sendCtx=null;
+function repoLabel(r){ return r==="flotte" ? "flotte (réglages communs)" : r; }
+function detectOtherRepo(repo, title, desc){
+  if(!model) return null;
+  const hay=(" "+title+" "+desc+" ").toLowerCase();
+  return model.repos.filter(r=>r.life!=="archive").map(r=>r.id).find(n=>{
+    if(n===repo || n.length<4) return false;
+    const rx=n.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g,"\\$&"); // frontière non-alphanumérique
+    return new RegExp(`[^a-z0-9]${rx}[^a-z0-9]`).test(hay);         // (pas au milieu d'un mot)
+  }) || null;
+}
+async function doSend(ctx){
+  // Parcours cloud : on ne crée pas d'issue ici — launchCloud compose le prompt, ancre la tâche
+  // et relaie par la modale « Copier et ouvrir » (le geste de copie/ouverture y reste synchrone).
+  if(ctx.mode==="cloud"){ launchCloud({repo:ctx.repo,title:ctx.title,desc:ctx.desc}); modal.close(); return; }
+  const btn=$("#f-submit"); btn.disabled=true; btn.textContent="Envoi…";
   try{
-    await createRequest({repo,title,desc,mode,modelChoice,prio,cat});
+    await createRequest({repo:ctx.repo,title:ctx.title,desc:ctx.desc,mode:ctx.mode,modelChoice:ctx.modelChoice,prio:ctx.prio,cat:ctx.cat});
     modal.close();
     await refresh(false);
   }catch(err){ toast("Échec : "+errMsg(err), 6000); }
   finally{ btn.disabled=false; syncWhen(); }
+}
+function resetSendConfirm(){
+  const el=$("#send-confirm"); if(el) el.hidden=true;
+  sendCtx=null;
+  const btn=$("#f-submit"); if(btn) btn.disabled=false;
+}
+function showRepoConfirm(ctx){
+  sendCtx=ctx;
+  const other=detectOtherRepo(ctx.repo, ctx.title, ctx.desc);
+  const el=$("#send-confirm"), msg=$("#send-confirm-msg"), acts=$("#send-confirm-actions");
+  if(!el||!msg||!acts){ doSend(ctx); return; } // repli : pas de barre → on envoie
+  // Le titre (y compris résumé auto) est rappelé ici : on confirme d'un coup le QUOI et le OÙ.
+  msg.innerHTML = other
+    ? `⚠️ « <b>${esc(ctx.title)}</b> » mentionne « <b>${esc(other)}</b> », mais partirait vers « <b>${esc(repoLabel(ctx.repo))}</b> ». C'est bien le bon projet ?`
+    : `« <b>${esc(ctx.title)}</b> » va partir vers le projet « <b>${esc(repoLabel(ctx.repo))}</b> ». C'est bien lui ?`;
+  acts.innerHTML =
+    `<button type="button" class="btn btn-primary" data-send-yes>✓ Oui, vers « ${esc(ctx.repo)} »</button>`+
+    (other?`<button type="button" class="btn" data-send-switch="${esc(other)}">→ Plutôt « ${esc(other)} »</button>`:"")+
+    `<button type="button" class="btn" data-send-change>Changer de projet…</button>`;
+  el.hidden=false;
+  const btn=$("#f-submit"); if(btn) btn.disabled=true; // le choix se fait dans la barre
+  el.scrollIntoView({block:"nearest"});
+}
+$("#send-confirm").addEventListener("click",(e)=>{
+  const b=e.target.closest("button"); if(!b || !sendCtx) return;
+  const ctx=sendCtx;
+  if(b.hasAttribute("data-send-yes")){ resetSendConfirm(); doSend(ctx); }
+  else if(b.hasAttribute("data-send-switch")){ const to=b.getAttribute("data-send-switch"); $("#f-repo").value=to; resetSendConfirm(); doSend({...ctx, repo:to}); }
+  else if(b.hasAttribute("data-send-change")){ resetSendConfirm(); $("#f-repo").focus(); }
+});
+// Éditer un champ (ou changer de projet/parcours) invalide une confirmation en attente.
+$("#form-new").addEventListener("input",resetSendConfirm);
+
+// La modale ne se ferme qu'en cas de SUCCÈS : avant, method="dialog" la fermait dès le
+// submit et un échec API (422, réseau…) emportait tout ce qui avait été saisi.
+$("#form-new").addEventListener("submit",(e)=>{
+  e.preventDefault();
+  const repo=$("#f-repo").value;
+  const desc=$("#f-desc").value.trim();
+  // Titre optionnel : laissé vide, on le résume depuis les détails (issue point 11).
+  let title=$("#f-title").value.trim();
+  if(!title) title=summarizeTitle(desc);
+  if(!title){ toast("Ajoute un titre, ou au moins quelques détails à résumer."); $("#f-desc").focus(); return; }
+  const mode=document.querySelector('input[name="f-when"]:checked').value;
+  const modelChoice=document.querySelector('input[name="f-model"]:checked').value;
+  const prio=document.querySelector('input[name="f-prio"]:checked').value;
+  const cat=$("#f-cat").value;
+  const ctx={repo,title,desc,mode,modelChoice,prio,cat};
+  // Codex sans autre projet mentionné : envoi direct (faible enjeu). Sinon : garde-fou.
+  if(mode==="box" && !detectOtherRepo(repo,title,desc)){ doSend(ctx); return; }
+  showRepoConfirm(ctx);
 });
 document.querySelectorAll('input[name="f-when"]').forEach(x=>x.addEventListener("change",syncWhen));
 // Échap / geste retour Android fermait la modale en emportant la saisie (dictée comprise) :

@@ -137,8 +137,8 @@
         <span class="aside-link"><a href="#" id="link-newproject">⚒ ou créer un nouveau projet…</a></span>
       </div>
       <div class="field">
-        <label for="f-title">Titre</label>
-        <input id="f-title" type="text" placeholder="Ex. : corriger l'affichage mobile du quiz" required>
+        <label for="f-title">Titre <small>— optionnel : laissé vide, il est résumé depuis les détails</small></label>
+        <input id="f-title" type="text" placeholder="Laisse vide pour un titre auto depuis les détails">
         <div class="mic-row">
           <button type="button" class="btn btn-mic" data-mic="#f-title" data-mic-interim="#f-title-interim" aria-label="Dicter le titre" title="Dicter le titre">🎙️</button>
           <span class="mic-interim" id="f-title-interim" hidden></span>
@@ -146,7 +146,7 @@
       </div>
       <div class="field">
         <label for="f-desc">Détails <small>— tout ce que tu as en tête, même en vrac</small></label>
-        <textarea id="f-desc" placeholder="On mettra tout au propre dans la session de toute façon."></textarea>
+        <textarea id="f-desc" placeholder="Décris ce que tu veux ; le titre se remplira tout seul si tu le laisses vide."></textarea>
         <div class="mic-row">
           <button type="button" class="btn btn-mic" data-mic="#f-desc" data-mic-interim="#f-desc-interim" aria-label="Dicter les détails" title="Dicter les détails">🎙️</button>
           <span class="mic-interim" id="f-desc-interim" hidden></span>
@@ -191,6 +191,10 @@
             <span><b>Fable</b><small>le plus capable — à réserver à l'exceptionnel · possiblement retiré sous peu</small></span></label>
         </div>
       </div>
+    </div>
+    <div class="send-confirm" id="send-confirm" hidden>
+      <p class="send-confirm-msg" id="send-confirm-msg"></p>
+      <div class="send-confirm-actions" id="send-confirm-actions"></div>
     </div>
     <div class="modal-foot">
       <span class="poc-note" id="modal-note"></span>

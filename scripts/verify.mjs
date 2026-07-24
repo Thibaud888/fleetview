@@ -190,6 +190,42 @@ async function checkMic() {
   return null;
 }
 
+// Contrat du titre auto-résumé (issue point 11 : titre optionnel, résumé depuis la description).
+// summarizeTitle() est PURE : 1re phrase courte ou amorce coupée sur une frontière de mot,
+// capitalisée, sans ponctuation finale. Ce qui est verrouillé : jamais de mot tronqué en plein,
+// une amorce lisible, et le cas vide → vide (on retombe alors sur la validation « écris qqch »).
+async function checkTitle() {
+  const src = await readFile(join(ROOT, "app.js"), "utf8");
+  const body = sliceFn(src, "summarizeTitle");
+  if (!body) return "summarizeTitle() introuvable / illisible dans app.js";
+  let f;
+  try { f = new Function(`${body}; return summarizeTitle;`)(); }
+  catch (e) { return `summarizeTitle() ne s'évalue pas : ${e.message}`; }
+
+  if (f("") !== "" || f("   ") !== "") return "description vide → titre vide attendu";
+  if (f("Ajouter un bouton export PDF. Puis tester l'impression.") !== "Ajouter un bouton export PDF")
+    return `1re phrase mal extraite : ${JSON.stringify(f("Ajouter un bouton export PDF. Puis tester l'impression."))}`;
+  if (f("corriger l'affichage mobile") !== "Corriger l'affichage mobile")
+    return "la 1re lettre doit être capitalisée";
+  if (f("Régler le bug.") !== "Régler le bug")
+    return "ponctuation finale non retirée sur une phrase courte";
+
+  // Longue amorce sans terminateur : coupée sur une frontière de mot, finie par …, jamais en plein mot.
+  const srcLong = "rejouer les capitales déjà vues selon un intervalle croissant de un puis trois puis sept jours en stockant la progression";
+  const long = f(srcLong);
+  if (!long.endsWith("…")) return "titre long : doit se terminer par …";
+  if (long.length > 72) return "titre long : pas assez resserré (" + long.length + ")";
+  const stem = long.slice(0, -1); // sans le …
+  const norm = srcLong.charAt(0).toUpperCase() + srcLong.slice(1);
+  if (!norm.startsWith(stem)) return "titre long : l'amorce n'est pas un préfixe des détails";
+  if (norm[stem.length] !== " ") return "titre long : coupe en plein mot (pas sur une frontière)";
+
+  // 1re phrase trop longue pour tenir : on ne la prend pas telle quelle, on retombe sur la coupe.
+  const bigSentence = "Une première phrase délibérément interminable qui dépasse largement les quatre-vingts caractères autorisés pour un titre.";
+  if (!f(bigSentence).endsWith("…")) return "1re phrase > 80 car. : doit retomber sur la coupe (…)";
+  return null;
+}
+
 // Contrat de scripts/rade.mjs (dispatch en rade, veilleur.mjs) — module pur, import direct
 // possible (contrairement à app.js, IIFE de navigateur). Verrouille ce qui distingue une PR de
 // session d'une PR de travail courant, et le franchissement de seuil en un seul passage
@@ -239,6 +275,8 @@ server.listen(PORT, async () => {
     if (badParse) return fail(`découpage BACKLOG.md — ${badParse}`);
     const badMic = await checkMic();
     if (badMic) return fail(`anti-répétition du micro — ${badMic}`);
+    const badTitle = await checkTitle();
+    if (badTitle) return fail(`titre auto-résumé — ${badTitle}`);
     const badRade = checkRade();
     if (badRade) return fail(`dispatch en rade (scripts/rade.mjs) — ${badRade}`);
     server.close();
