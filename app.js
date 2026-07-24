@@ -669,9 +669,9 @@ function demoModel(){
         pr:{num:15,title:"Lecture audio iOS",checks:"tests ✓ 3/3",files:4,add:118,del:22,body:"Débloque l'AudioContext au premier geste utilisateur. Résout l'issue #12."},
         lines:[L("warn","PR #15 « Lecture audio iOS » — tests ✓, attend ta décision","depuis 15 h",{id:"open-pr",n:15,label:"Examiner"})]},
       {id:"veille-emploi", type:"cron-python", life:"actif", state:"calm", last:"07:05", url:"#",
-        lines:[L("ok","veille.yml — OK","ce matin")]},
+        lines:[L("ok","veille — OK","ce matin")]},
       {id:"digest-hebdo", type:"cron-python", life:"veille", state:"calm", last:"lundi", url:"#",
-        lines:[L("ok","Dev en pause · weekly-digest.yml surveillé")]},
+        lines:[L("ok","Dev en pause · weekly-digest surveillé")]},
     ],
     ideas:[
       {num:1,p:"P1",repo:"quiz-capitales",t:"Miniatures automatiques pour les shorts",desc:"Générer la miniature depuis la première question du quiz, avec le drapeau en fond.",cat:"feature",url:"#"},
