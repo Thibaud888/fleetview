@@ -436,7 +436,7 @@ function buildModel(fleet, D){
           status={phase:"abandon", c:"crit", label:"ancrage en plan",
             hint:`Ancrage ouvert depuis ${j} jours sans PR — la session cloud a sans doute été abandonnée. Tant qu'il reste ouvert, ce repo compte comme « en session » et l'anti-collision y bloque tout nouveau lancement. Reprends le fil dans claude.ai, ou clos l'ancrage.`};
           lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — 🌩 ancrage en plan depuis ${j} jours, aucune PR`, small:timeAgo(is.created_at), act:{id:"close-anchor", n:is.number, label:"Clore l'ancrage"}});
-          attention.push({c:"crit", repo:id, t:`L'ancrage cloud « ${is.title} » traîne depuis ${j} jours sans PR`, small:timeAgo(is.created_at), verb:"Voir"});
+          attention.push({c:"crit", repo:id, t:`L'ancrage cloud « ${is.title} » traîne depuis ${j} jours sans PR`, small:timeAgo(is.created_at), thread:is.number, verb:"Voir"});
           next.push({c:"crit", t:`L'ancrage cloud « ${is.title} » est ouvert depuis ${j} jours sans PR — il bloque les lancements sur ce repo`, act:{id:"close-anchor", n:is.number, label:"Clore l'ancrage"}});
         } else {
           bump("info");
@@ -459,7 +459,7 @@ function buildModel(fleet, D){
         status={phase:"question", c:"warn", label:"à toi de répondre",
           hint:"Claude te pose une question et attend ta réponse pour continuer — choisis une option ou réponds librement."};
         lines.push({c:"warn", t:`Issue #${is.number} « ${is.title} » — Claude attend ta réponse`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
-        attention.push({c:"warn", repo:id, t:`Claude te pose une question sur « ${is.title} »`, small:timeAgo(lastC.created_at), verb:"Répondre"});
+        attention.push({c:"warn", repo:id, t:`Claude te pose une question sur « ${is.title} »`, small:timeAgo(lastC.created_at), thread:is.number, verb:"Répondre"});
         next.push({c:"warn", t:`Réponds à Claude sur « ${is.title} » — la session est en pause en attendant`, act:{id:"open-thread", n:is.number, label:"Répondre ↓"}});
         notify.push({key:`q:${id}#${is.number}:${lastC.id||lastC.created_at}`, kind:"q",
           title:`${id} — Claude attend ta réponse`, msg:is.title, repo:id, tag:"speech_balloon", prio:4});
@@ -468,7 +468,7 @@ function buildModel(fleet, D){
         status={phase:"silence", c:"crit", label:"session muette",
           hint:`Plus de nouvelles depuis ${Math.round(idleH)} h — la session a sans doute planté. Relance-la, ça repart de zéro sur cette issue.`};
         lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — muette depuis ${Math.round(idleH)} h`, act:{id:"relabel", n:is.number, label:"Relancer"}});
-        attention.push({c:"crit", repo:id, t:`La session sur « ${is.title} » est muette depuis ${Math.round(idleH)} h`, verb:"Voir"});
+        attention.push({c:"crit", repo:id, t:`La session sur « ${is.title} » est muette depuis ${Math.round(idleH)} h`, thread:is.number, verb:"Voir"});
         next.push({c:"crit", t:`La session sur « ${is.title} » est muette depuis ${Math.round(idleH)} h — sans doute plantée`, act:{id:"relabel", n:is.number, label:"Relancer la session"}});
       } else if(lastC){
         bump("info");
@@ -494,7 +494,7 @@ function buildModel(fleet, D){
       if(ch && ch.bad){
         bump("crit");
         lines.push({c:"crit", t:`PR #${p.number} « ${p.title} » — ${chTxt}`, act:{id:"open-pr", n:p.number, label:"Examiner"}});
-        attention.push({c:"crit", repo:id, t:`Les tests de la PR #${p.number} « ${p.title} » échouent`, verb:"Voir"});
+        attention.push({c:"crit", repo:id, t:`Les tests de la PR #${p.number} « ${p.title} » échouent`, pr:p.number, verb:"Voir"});
         next.push({c:"crit", t:`Les tests de la PR #${p.number} « ${p.title} » échouent — demande la correction ou regarde les logs`, act:{id:"open-pr", n:p.number, label:"Examiner ↓"}});
       } else if(ch && ch.pending){
         bump("info");
@@ -502,7 +502,7 @@ function buildModel(fleet, D){
       } else {
         bump("warn");
         lines.push({c:"warn", t:`PR #${p.number} « ${p.title} » — ${chTxt}, attend ta décision`, small:timeAgo(p.created_at), act:{id:"open-pr", n:p.number, label:"Examiner"}});
-        attention.push({c:"warn", repo:id, t:`La PR #${p.number} « ${p.title} » est prête (tests verts)`, small:timeAgo(p.created_at), verb:"Décider"});
+        attention.push({c:"warn", repo:id, t:`La PR #${p.number} « ${p.title} » est prête (tests verts)`, small:timeAgo(p.created_at), pr:p.number, verb:"Décider"});
         next.push({c:"warn", t:`La PR #${p.number} « ${p.title} » est prête (tests verts) — merger, ou demander des changements`, act:{id:"open-pr", n:p.number, label:"Décider ↓"}});
         notify.push({key:`pr:${id}#${p.number}`, kind:"pr",
           title:`${id} — PR #${p.number} prête à merger`, msg:p.title, repo:id, tag:"white_check_mark", prio:4});
@@ -664,9 +664,9 @@ function demoModel(){
     ],
     attention:[
       {c:"crit",repo:"quiz-capitales",t:"Le cron publish-shorts échoue ×2",small:"il y a 40 min",verb:"Voir"},
-      {c:"warn",repo:"bulletins-viz",t:"Claude te pose une question sur « Moyenne pondérée par coefficient »",small:"il y a 25 min",verb:"Répondre"},
+      {c:"warn",repo:"bulletins-viz",t:"Claude te pose une question sur « Moyenne pondérée par coefficient »",small:"il y a 25 min",thread:21,verb:"Répondre"},
       {c:"warn",repo:"codex",t:"Le cadrage te pose une question sur « Rendre les bulletins plus lisibles »",small:"il y a 1 h",idea:2,verb:"Répondre"},
-      {c:"warn",repo:"talk-show-oral",t:"La PR #15 est prête (tests verts)",small:"depuis 15 h",verb:"Décider"},
+      {c:"warn",repo:"talk-show-oral",t:"La PR #15 est prête (tests verts)",small:"depuis 15 h",pr:15,verb:"Décider"},
     ],
     feed:[
       {ts:new Date().toISOString(),c:"ok",repo:"bulletins-viz",txt:"PR #17 self-heal mergée."},
@@ -700,7 +700,7 @@ function renderAttention(){
       <span class="repo-name">${esc(x.repo)}</span>
       <span class="txt">${esc(x.t)}${x.small?` <span class="marginalia">· ${esc(x.small)}</span>`:""}</span>
       ${x.idea?`<button class="btn-mini" data-open-idea="${x.idea}">${esc(x.verb||"Répondre")}</button>`
-              :`<button class="btn-mini" data-open="${esc(x.repo)}">${esc(x.verb||"Examiner")}</button>`}
+              :`<button class="btn-mini" data-open="${esc(x.repo)}"${x.thread?` data-thread="${x.thread}"`:""}${x.pr?` data-pr="${x.pr}"`:""}>${esc(x.verb||"Examiner")}</button>`}
     </div>`).join("");
 }
 function renderFilters(){
@@ -1025,7 +1025,7 @@ function renderDetail(){
   const relatedFeed=model.feed.filter(f=>f.repo===r.id).slice(0,5);
 
   const prBlock=r.pr?`
-    <div class="block">
+    <div class="block" data-pr-block>
       <div class="block-head">
         <span class="eyebrow">Pull request #${r.pr.num} — ${esc(r.pr.title)}</span>
         <span class="pr-stats num">${esc(r.pr.checks)} · ${r.pr.files} fichiers · <span class="add">+${r.pr.add}</span> <span class="del">−${r.pr.del}</span></span>
@@ -1891,7 +1891,10 @@ function syncWhen(){
 
 /* ================= Événements ================= */
 // Ouvre la vue projet d'un repo (depuis « À traiter », une carte, ou un bouton de ligne).
-function openDetail(id){
+// `focus` (optionnel) amène DIRECTEMENT sur ce qui attend : {thread:n, reply:true} pour un fil
+// de dialogue (défilé sur le dernier message, la question, champ prêt), {pr:true} pour la PR.
+// Sans focus, on ouvre en haut de la vue (parcours « je regarde ce projet »).
+function openDetail(id, focus){
   if(!model || !model.repos.some(x=>x.id===id)) return;
   if(ui.openRepo!==id){
     if(!ui.openRepo) ui.scrollY=window.scrollY; // position dans l'atelier, restaurée au retour
@@ -1899,7 +1902,33 @@ function openDetail(id){
   }
   document.body.dataset.tab="flotte";
   document.querySelectorAll(".bb-btn").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.tab==="flotte")));
-  renderDetail(); window.scrollTo({top:0}); syncUrl();
+  renderDetail();
+  if(focus && focus.thread!=null) focusThread(focus.thread, focus.reply);
+  else if(focus && focus.pr) focusPr();
+  else window.scrollTo({top:0});
+  syncUrl();
+}
+// Amène sur UN fil précis et le met en évidence : c'est le geste « Répondre » d'« À traiter »
+// et de « Que faire ? ». On défile le fil sur son DERNIER message (la question de Claude) —
+// fini le passage obligé par « ↧ Dernier » — et on met le bloc en surbrillance pour qu'on
+// sache exactement sur quelle tâche on est (le reproche « je me perds entre les tâches »).
+function focusThread(num, reply){
+  const block=document.querySelector(`.thread-block[data-thread="${num}"]`);
+  if(!block){ window.scrollTo({top:0}); return; }
+  block.scrollIntoView({block:"start"});
+  const thread=block.querySelector(".thread");
+  if(thread) thread.scrollTop=thread.scrollHeight; // dernier message (la question) visible d'emblée
+  block.classList.remove("flash"); void block.offsetWidth; block.classList.add("flash"); // (re)déclenche l'animation
+  setTimeout(()=>block.classList.remove("flash"), 1900);
+  if(reply){ const ta=block.querySelector(".reply textarea"); if(ta){ try{ ta.focus({preventScroll:true}); }catch(_){ ta.focus(); } } }
+}
+// Amène sur le bloc Pull request et le met en évidence (geste « Décider » / « Examiner »).
+function focusPr(){
+  const block=document.querySelector("#view-detail [data-pr-block]");
+  if(!block){ window.scrollTo({top:0}); return; }
+  block.scrollIntoView({block:"start"});
+  block.classList.remove("flash"); void block.offsetWidth; block.classList.add("flash");
+  setTimeout(()=>block.classList.remove("flash"), 1900);
 }
 // Ouvre le codex directement sur une idée (depuis « À traiter » ou une notification ?idea=).
 function openIdea(num){
@@ -1935,7 +1964,13 @@ document.addEventListener("click",async(e)=>{
       syncUrl();
       return;
     }
-    if(b.dataset.open!==undefined){ openDetail(b.dataset.open); return; }
+    if(b.dataset.open!==undefined){
+      // « À traiter » cible désormais directement le fil (data-thread) ou la PR (data-pr)
+      // concernés — un seul geste mène au bon endroit, plus au sommet d'un projet à fouiller.
+      const focus = (b.dataset.thread!==undefined&&b.dataset.thread!=="") ? {thread:Number(b.dataset.thread), reply:true}
+        : (b.dataset.pr!==undefined&&b.dataset.pr!=="") ? {pr:true} : null;
+      openDetail(b.dataset.open, focus); return;
+    }
     if(b.dataset.newfor!==undefined){ openModal({repo:b.dataset.newfor}); return; }
     // 🪶 Cadrer : présent au codex ET dans la vue projet (« Au codex pour ce projet »),
     // d'où ce handler global — l'écouteur du panneau #ideas ne le gère pas (pas de doublon).
@@ -2003,10 +2038,8 @@ document.addEventListener("click",async(e)=>{
         switch(b.dataset.act){
           case "back": ui.openRepo=null; ui.threadBig=null; renderDetail();
             window.scrollTo({top:ui.scrollY||0}); ui.scrollY=0; syncUrl(); break;
-          case "open-thread": if(r){ openDetail(r.id); // le fil est dans la vue projet
-            const tb=document.querySelector(`.thread-block[data-thread="${n}"]`);
-            if(tb) tb.scrollIntoView({block:"start"}); } break;
-          case "open-pr": if(r) openDetail(r.id); break;     // le bloc PR aussi
+          case "open-thread": if(r) openDetail(r.id, {thread:Number(n), reply:true}); break; // droit au fil, sur la question, champ prêt
+          case "open-pr": if(r) openDetail(r.id, {pr:true}); break;                          // droit au bloc PR
           case "gh-issue": if(r) window.open(`${r.url}/issues/${n}`,"_blank"); break;
           case "merge": if(r){ b.disabled=true; await mergePr(r.id,n); await refresh(); } break;
           case "pr-comment": $("#pr-reply").hidden=false; $("#pr-reply-text").focus(); break;
