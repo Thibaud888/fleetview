@@ -433,53 +433,53 @@ function buildModel(fleet, D){
           // restait « session cloud en cours » pour toujours — état faux et repo bloqué.
           bump("crit");
           const j=Math.round(ageD);
-          status={phase:"abandon", c:"crit", label:"ancrage en plan",
-            hint:`Ancrage ouvert depuis ${j} jours sans PR — la session cloud a sans doute été abandonnée. Tant qu'il reste ouvert, ce repo compte comme « en session » et l'anti-collision y bloque tout nouveau lancement. Reprends le fil dans claude.ai, ou clos l'ancrage.`};
-          lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — 🌩 ancrage en plan depuis ${j} jours, aucune PR`, small:timeAgo(is.created_at), act:{id:"close-anchor", n:is.number, label:"Clore l'ancrage"}});
-          attention.push({c:"crit", repo:id, t:`L'ancrage cloud « ${is.title} » traîne depuis ${j} jours sans PR`, small:timeAgo(is.created_at), thread:is.number, verb:"Voir"});
-          next.push({c:"crit", t:`L'ancrage cloud « ${is.title} » est ouvert depuis ${j} jours sans PR — il bloque les lancements sur ce repo`, act:{id:"close-anchor", n:is.number, label:"Clore l'ancrage"}});
+          status={phase:"abandon", c:"crit", label:"session cloud oubliée",
+            hint:`Session cloud ouverte depuis ${j} jours sans résultat — sans doute abandonnée. Tant qu'elle reste ouverte, ce projet compte comme occupé et tu ne peux rien y relancer. Reprends-la dans claude.ai, ou clos-la ici.`};
+          lines.push({c:"crit", t:`« ${is.title} » — 🌩 session cloud oubliée depuis ${j} jours, sans résultat`, small:timeAgo(is.created_at), act:{id:"close-anchor", n:is.number, label:"Clore"}});
+          attention.push({c:"crit", repo:id, t:`La session cloud « ${is.title} » traîne depuis ${j} jours sans résultat`, small:timeAgo(is.created_at), thread:is.number, verb:"Voir"});
+          next.push({c:"crit", t:`La session cloud « ${is.title} » est ouverte depuis ${j} jours sans résultat — elle occupe ce projet pour rien`, act:{id:"close-anchor", n:is.number, label:"Clore la session"}});
         } else {
           bump("info");
           status={phase:"session", c:"info", label:"session cloud",
-            hint:"Session interactive en cours dans claude.ai — le dialogue s'y passe, pas ici. L'issue se fermera toute seule au merge de la PR."};
-          lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — 🌩 session cloud en cours`, small:timeAgo(is.created_at), act:{id:"gh-issue", n:is.number, label:"Voir l'issue"}});
+            hint:"Discussion en cours dans claude.ai — elle se passe là-bas, pas ici. Ça se referme tout seul une fois les changements validés."};
+          lines.push({c:"info", t:`« ${is.title} » — 🌩 session cloud en cours`, small:timeAgo(is.created_at), act:{id:"gh-issue", n:is.number, label:"Voir sur GitHub"}});
         }
       } else if(linkedPR){
         // La PR parle pour elle (état et lignes traités plus bas) — mais le fil reste
         // visible : l'issue est encore ouverte, on peut vouloir y répondre.
-        status={phase:"pr", c:"warn", label:"PR ouverte",
-          hint:`La session a ouvert la PR #${linkedPR.number} — la décision se prend dans le bloc Pull request.`};
+        status={phase:"pr", c:"warn", label:"proposition prête",
+          hint:`Claude a proposé des changements (PR #${linkedPR.number}) — à examiner et valider dans le bloc « Pull request », plus bas.`};
       } else if(claudeRunning && !asksQuestion){
         bump("info");
-        status={phase:"session", c:"info", label:"session en cours",
-          hint:"Claude travaille — rien à faire pour l'instant, le journal du run défile plus bas."};
-        lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session en cours`, small:timeAgo(is.updated_at), act:{id:"gh-issue", n:is.number, label:"Suivre"}});
+        status={phase:"session", c:"info", label:"Claude travaille",
+          hint:"Claude est au travail — rien à faire pour l'instant, son avancement défile plus bas."};
+        lines.push({c:"info", t:`« ${is.title} » — Claude travaille`, small:timeAgo(is.updated_at), act:{id:"gh-issue", n:is.number, label:"Suivre"}});
       } else if(lastFromClaude){
         bump("warn");
         status={phase:"question", c:"warn", label:"à toi de répondre",
-          hint:"Claude te pose une question et attend ta réponse pour continuer — choisis une option ou réponds librement."};
-        lines.push({c:"warn", t:`Issue #${is.number} « ${is.title} » — Claude attend ta réponse`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
+          hint:"Claude te pose une question et attend ta réponse pour continuer — choisis une option, ou réponds librement."};
+        lines.push({c:"warn", t:`« ${is.title} » — Claude attend ta réponse`, small:timeAgo(lastC.created_at), act:{id:"open-thread", n:is.number, label:"Répondre"}});
         attention.push({c:"warn", repo:id, t:`Claude te pose une question sur « ${is.title} »`, small:timeAgo(lastC.created_at), thread:is.number, verb:"Répondre"});
-        next.push({c:"warn", t:`Réponds à Claude sur « ${is.title} » — la session est en pause en attendant`, act:{id:"open-thread", n:is.number, label:"Répondre ↓"}});
+        next.push({c:"warn", t:`Réponds à Claude sur « ${is.title} » — il attend ta réponse pour continuer`, act:{id:"open-thread", n:is.number, label:"Répondre ↓"}});
         notify.push({key:`q:${id}#${is.number}:${lastC.id||lastC.created_at}`, kind:"q",
           title:`${id} — Claude attend ta réponse`, msg:is.title, repo:id, tag:"speech_balloon", prio:4});
       } else if(idleH>2){
         bump("crit");
-        status={phase:"silence", c:"crit", label:"session muette",
-          hint:`Plus de nouvelles depuis ${Math.round(idleH)} h — la session a sans doute planté. Relance-la, ça repart de zéro sur cette issue.`};
-        lines.push({c:"crit", t:`Issue #${is.number} « ${is.title} » — muette depuis ${Math.round(idleH)} h`, act:{id:"relabel", n:is.number, label:"Relancer"}});
-        attention.push({c:"crit", repo:id, t:`La session sur « ${is.title} » est muette depuis ${Math.round(idleH)} h`, thread:is.number, verb:"Voir"});
-        next.push({c:"crit", t:`La session sur « ${is.title} » est muette depuis ${Math.round(idleH)} h — sans doute plantée`, act:{id:"relabel", n:is.number, label:"Relancer la session"}});
+        status={phase:"silence", c:"crit", label:"sans réponse",
+          hint:`Aucune nouvelle depuis ${Math.round(idleH)} h — Claude s'est sans doute arrêté en cours de route. Relance : ça reprend depuis ta demande.`};
+        lines.push({c:"crit", t:`« ${is.title} » — silence depuis ${Math.round(idleH)} h`, act:{id:"relabel", n:is.number, label:"Relancer"}});
+        attention.push({c:"crit", repo:id, t:`« ${is.title} » : Claude ne répond plus depuis ${Math.round(idleH)} h`, thread:is.number, verb:"Reprendre"});
+        next.push({c:"crit", t:`« ${is.title} » : aucune nouvelle depuis ${Math.round(idleH)} h — Claude s'est sans doute arrêté en cours de route`, act:{id:"relabel", n:is.number, label:"Relancer"}});
       } else if(lastC){
         bump("info");
         status={phase:"repondu", c:"info", label:"réponse envoyée",
-          hint:"Ta réponse est partie — la session reprend d'elle-même (compte ~1 min avant le prochain signe de vie)."};
-        lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — réponse envoyée, la session reprend`, small:timeAgo(lastC.created_at)});
+          hint:"Ta réponse est partie — Claude reprend tout seul (compte ~1 min avant le prochain signe de vie)."};
+        lines.push({c:"info", t:`« ${is.title} » — réponse envoyée, ça reprend`, small:timeAgo(lastC.created_at)});
       } else {
         bump("info");
         status={phase:"lancement", c:"info", label:"démarrage",
-          hint:"La session démarre — premier signe de vie d'ici quelques minutes."};
-        lines.push({c:"info", t:`Issue #${is.number} « ${is.title} » — session en attente de démarrage`, small:timeAgo(is.created_at)});
+          hint:"Ça démarre — premier signe de vie d'ici quelques minutes."};
+        lines.push({c:"info", t:`« ${is.title} » — démarrage en cours`, small:timeAgo(is.created_at)});
       }
       threadIssues.push({num:is.number, title:is.title, comments, body:is.body, status});
       feed.push({ts:is.created_at, c:"info", repo:id, txt:`Issue #${is.number} « ${is.title} » ouverte.`});
@@ -490,7 +490,7 @@ function buildModel(fleet, D){
       seen(p.updated_at);
       const det = D.prDetails[id+"#"+p.number];
       const ch = det&&det.checks;
-      const chTxt = ch ? (ch.pending? "checks en cours" : ch.bad? `${ch.bad} check(s) en échec` : `checks ✓ ${ch.ok}/${ch.total}`) : "checks ?";
+      const chTxt = ch ? (ch.pending? "tests en cours" : ch.bad? `${ch.bad} test(s) en échec` : `tests ✓ ${ch.ok}/${ch.total}`) : "tests ?";
       if(ch && ch.bad){
         bump("crit");
         lines.push({c:"crit", t:`PR #${p.number} « ${p.title} » — ${chTxt}`, act:{id:"open-pr", n:p.number, label:"Examiner"}});
@@ -512,26 +512,28 @@ function buildModel(fleet, D){
       feed.push({ts:p.created_at, c:"warn", repo:id, txt:`PR #${p.number} « ${p.title} » ouverte.`});
     }
 
-    // Crons : dernier run de chaque workflow planifié
+    // Crons : dernier run de chaque workflow planifié. `cron` garde le nom de fichier (.yml)
+    // pour filtrer les runs ; `cronName` est la version lisible affichée (sans extension).
     for(const cron of (fr.crons||[])){
       const wf = runs.filter(r=>(r.path||"").endsWith("/"+cron));
       const last = wf[0];
       if(!last) continue;
+      const cronName = cron.replace(/\.ya?ml$/i,"");
       seen(last.updated_at);
       if(last.conclusion==="failure"){
         const streak = wf.findIndex(r=>r.conclusion!=="failure");
         const n = streak===-1?wf.length:streak;
         bump("crit");
-        lines.push({c:"crit", t:`${cron} — ${n>1?n+" échecs consécutifs":"en échec"}`, small:timeAgo(last.updated_at), act:{id:"rerun", n:last.id, label:"Relancer"}});
-        attention.push({c:"crit", repo:id, t:`Le cron ${cron} échoue${n>1?" ×"+n:""}`, small:timeAgo(last.updated_at), verb:"Voir"});
-        next.push({c:"crit", t:`Le cron ${cron} échoue${n>1?` (×${n})`:""} — souvent un incident passager : relance-le d'abord`, act:{id:"rerun", n:last.id, label:"Relancer le cron"}});
-        feed.push({ts:last.updated_at, c:"crit", repo:id, txt:`${cron} en échec.`});
+        lines.push({c:"crit", t:`${cronName} — ${n>1?n+" échecs d'affilée":"en échec"}`, small:timeAgo(last.updated_at), act:{id:"rerun", n:last.id, label:"Relancer"}});
+        attention.push({c:"crit", repo:id, t:`L'automatisation « ${cronName} » a échoué${n>1?" ×"+n:""}`, small:timeAgo(last.updated_at), verb:"Voir"});
+        next.push({c:"crit", t:`L'automatisation « ${cronName} » a échoué${n>1?` (×${n})`:""} — souvent un incident passager : relance-la d'abord`, act:{id:"rerun", n:last.id, label:"Relancer"}});
+        feed.push({ts:last.updated_at, c:"crit", repo:id, txt:`${cronName} en échec.`});
       } else if(last.status!=="completed"){
         bump("info");
-        lines.push({c:"info", t:`${cron} — en cours`, small:timeAgo(last.updated_at)});
+        lines.push({c:"info", t:`${cronName} — en cours`, small:timeAgo(last.updated_at)});
       } else {
-        lines.push({c:"ok", t:`${cron} — OK`, small:timeAgo(last.updated_at)});
-        feed.push({ts:last.updated_at, c:"ok", repo:id, txt:`${cron} OK.`});
+        lines.push({c:"ok", t:`${cronName} — OK`, small:timeAgo(last.updated_at)});
+        feed.push({ts:last.updated_at, c:"ok", repo:id, txt:`${cronName} OK.`});
       }
     }
 
@@ -613,12 +615,12 @@ function demoModel(){
   return {
     repos:[
       {id:"quiz-capitales", type:"cron-node", life:"actif", state:"crit", last:"il y a 40 min", url:"#",
-        next:[{c:"crit", t:"Le cron publish-shorts.yml échoue (×2) — souvent un incident passager : relance-le d'abord", act:{id:"demo", label:"Relancer le cron"}}],
-        lines:[L("crit","publish-shorts.yml — 2 échecs consécutifs","il y a 40 min",{id:"demo",label:"Relancer"}), L("ok","retry-reels.yml — OK","cette nuit")]},
+        next:[{c:"crit", t:"L'automatisation « publish-shorts » a échoué (×2) — souvent un incident passager : relance-la d'abord", act:{id:"demo", label:"Relancer"}}],
+        lines:[L("crit","publish-shorts — 2 échecs d'affilée","il y a 40 min",{id:"demo",label:"Relancer"}), L("ok","retry-reels — OK","cette nuit")]},
       {id:"bulletins-viz", type:"static · kit 1.0.0", life:"actif", state:"warn", last:"il y a 12 min", url:"#",
-        next:[{c:"warn", t:"Réponds à Claude sur « Moyenne pondérée par coefficient » — la session est en pause en attendant", act:{id:"open-thread", n:21, label:"Répondre ↓"}}],
-        lines:[L("info","Issue #18 « Export PDF » — session en cours","12 min",{id:"open-thread",n:18,label:"Suivre"}),
-               L("warn","Issue #21 « Moyenne pondérée par coefficient » — Claude attend ta réponse","il y a 25 min",{id:"open-thread",n:21,label:"Répondre"})],
+        next:[{c:"warn", t:"Réponds à Claude sur « Moyenne pondérée par coefficient » — il attend ta réponse pour continuer", act:{id:"open-thread", n:21, label:"Répondre ↓"}}],
+        lines:[L("info","« Export PDF » — Claude travaille","12 min",{id:"open-thread",n:18,label:"Suivre"}),
+               L("warn","« Moyenne pondérée par coefficient » — Claude attend ta réponse","il y a 25 min",{id:"open-thread",n:21,label:"Répondre"})],
         lastRun:{id:1, name:"Export PDF — session #18", wf:"claude.yml", status:"in_progress",
           conclusion:null, running:true, url:"#", started:new Date(Date.now()-4*60000).toISOString()},
         demoJobs:[{name:"claude", status:"in_progress", conclusion:null, steps:[
@@ -630,7 +632,7 @@ function demoModel(){
           {number:6,name:"Ouverture de la PR",status:"queued",conclusion:null}]}],
         threadIssues:[
           {num:18, title:"Export PDF", body:"Ajouter un bouton pour exporter le bulletin courant en PDF.\n\n_Créée depuis FleetView._",
-           status:{phase:"session", c:"info", label:"session en cours", hint:"Claude travaille — rien à faire pour l'instant, le journal du run défile plus bas."},
+           status:{phase:"session", c:"info", label:"Claude travaille", hint:"Claude est au travail — rien à faire pour l'instant, son avancement défile plus bas."},
            comments:[
             {user:{login:OWNER}, body:"Ajouter un bouton pour exporter le bulletin courant en PDF."},
             {user:{login:"claude[bot]"}, body:"## Spécification\n\n**Objectif** : bouton « Exporter en PDF » dans la barre du bulletin.\n\n- Rendu client via `window.print` + feuille `@media print` dédiée — aucune dépendance\n- Critères de done :\n- [x] le PDF reprend le graphe et le tableau\n- [ ] sans la navigation\n\nJ'enchaîne l'implémentation."},
@@ -646,8 +648,8 @@ function demoModel(){
         ]},
       {id:"talk-show-oral", type:"service-node", life:"actif", state:"warn", last:"hier", url:"#",
         next:[{c:"warn", t:"La PR #15 « Lecture audio iOS » est prête (tests verts) — merger, ou demander des changements", act:{id:"open-pr", n:15, label:"Décider ↓"}}],
-        pr:{num:15,title:"Lecture audio iOS",checks:"checks ✓ 3/3",files:4,add:118,del:22,body:"Débloque l'AudioContext au premier geste utilisateur. Résout l'issue #12."},
-        lines:[L("warn","PR #15 « Lecture audio iOS » — checks ✓, attend ta décision","depuis 15 h",{id:"open-pr",n:15,label:"Examiner"})]},
+        pr:{num:15,title:"Lecture audio iOS",checks:"tests ✓ 3/3",files:4,add:118,del:22,body:"Débloque l'AudioContext au premier geste utilisateur. Résout l'issue #12."},
+        lines:[L("warn","PR #15 « Lecture audio iOS » — tests ✓, attend ta décision","depuis 15 h",{id:"open-pr",n:15,label:"Examiner"})]},
       {id:"veille-emploi", type:"cron-python", life:"actif", state:"calm", last:"07:05", url:"#",
         lines:[L("ok","veille.yml — OK","ce matin")]},
       {id:"digest-hebdo", type:"cron-python", life:"veille", state:"calm", last:"lundi", url:"#",
@@ -670,7 +672,7 @@ function demoModel(){
     ],
     feed:[
       {ts:new Date().toISOString(),c:"ok",repo:"bulletins-viz",txt:"PR #17 self-heal mergée."},
-      {ts:new Date(Date.now()-3.6e6).toISOString(),c:"crit",repo:"quiz-capitales",txt:"publish-shorts.yml en échec."},
+      {ts:new Date(Date.now()-3.6e6).toISOString(),c:"crit",repo:"quiz-capitales",txt:"publish-shorts en échec."},
       {ts:new Date(Date.now()-86400e3).toISOString(),c:"warn",repo:"talk-show-oral",txt:"PR #15 ouverte par la session Actions."},
     ],
   };
@@ -1075,7 +1077,7 @@ function renderDetail(){
     return `
     <div class="block thread-block${big?" full":""}" data-thread="${th.num}">
       <div class="block-head">
-        <span class="eyebrow">Dialogue — issue #${th.num} « ${esc(th.title)} »</span>
+        <span class="eyebrow">Dialogue #${th.num} — « ${esc(th.title)} »</span>
         ${st?`<span class="pill" style="--c:var(--${st.c})">${esc(st.label)}</span>`:""}
         <button class="btn-mini${big?" on":""}" data-act="thread-big" data-n="${th.num}">${big?"↙ Réduire":"⛶ Plein écran"}</button>
         <button class="btn-mini" data-act="thread-close" data-n="${th.num}" title="Clore cette discussion et la classer sans suite">✕ Clore</button>
