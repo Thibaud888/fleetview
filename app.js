@@ -1077,7 +1077,8 @@ function renderDetail(){
       <div class="block-head">
         <span class="eyebrow">Dialogue — issue #${th.num} « ${esc(th.title)} »</span>
         ${st?`<span class="pill" style="--c:var(--${st.c})">${esc(st.label)}</span>`:""}
-        <button class="btn-mini${big?" on":""}" data-act="thread-big" data-n="${th.num}">${big?"✕ Fermer":"⛶ Plein écran"}</button>
+        <button class="btn-mini${big?" on":""}" data-act="thread-big" data-n="${th.num}">${big?"↙ Réduire":"⛶ Plein écran"}</button>
+        <button class="btn-mini" data-act="thread-close" data-n="${th.num}" title="Classer cette discussion sans suite — ferme l'issue #${th.num}">✕ Fermer</button>
       </div>
       ${st?`<p class="thread-hint">${esc(st.hint)}</p>`:""}
       ${threadBar}
@@ -1330,6 +1331,18 @@ async function closeAnchor(repo,num){
   await gh(`/repos/${OWNER}/${repo}/issues/${num}`,
     {method:"PATCH",body:{state:"closed",state_reason:"not_planned"}});
   toast(`✓ Ancrage #${num} clos — ce repo est de nouveau disponible pour une session.`);
+}
+// Fermeture d'un fil de dialogue à la demande de Thibaud : la discussion n'a plus lieu d'être
+// (cf. issue #60 — pas de bouton pour clore soi-même, même en attente d'une réponse). Même
+// logique que closeAnchor : commentaire de trace avant fermeture, `not_planned` car rien n'a
+// abouti. Fonctionne quelle que soit la phase du fil (question, session, silence…).
+async function closeThread(repo,num){
+  if(demo){ toast("Mode démo — rien n'est envoyé. En réel : le fil se ferme et le repo redevient disponible."); return; }
+  await gh(`/repos/${OWNER}/${repo}/issues/${num}/comments`,
+    {method:"POST",body:{body:"→ fil clos depuis FleetView : discussion classée sans suite."}});
+  await gh(`/repos/${OWNER}/${repo}/issues/${num}`,
+    {method:"PATCH",body:{state:"closed",state_reason:"not_planned"}});
+  toast(`✓ Fil #${num} clos — ce repo est de nouveau disponible pour une session.`);
 }
 async function mergePr(repo,num){
   if(demo){ toast("Mode démo — rien n'est envoyé."); return; }
@@ -2025,6 +2038,9 @@ document.addEventListener("click",async(e)=>{
           case "relabel": if(r){ b.disabled=true;
             await sendComment(r.id,n,"la session ne semble pas avoir abouti — reprends cette issue depuis le début."); await refresh(); } break;
           case "close-anchor": if(r){ b.disabled=true; await closeAnchor(r.id,n); await refresh(); } break;
+          case "thread-close": if(r){ if(!confirm(`Fermer le fil #${n} ? La discussion sera classée sans suite sur GitHub.`)) break;
+            b.disabled=true; if(ui.threadBig===Number(n)) ui.threadBig=null;
+            await closeThread(r.id,n); await refresh(); } break;
           case "life": if(r){ b.disabled=true; await setLifecycle(r.id,n);
             if(n==="archivé") ui.openRepo=null; await refresh(); } break;
           case "run-follow": if(r&&r.lastRun) startJournal(r.id, r.lastRun.id, $("#run-journal"), demo?r.demoJobs:null); break;
