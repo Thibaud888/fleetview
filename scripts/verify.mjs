@@ -53,29 +53,36 @@ server.on("error", (e) => fail(`le serveur n'a pas démarré : ${e.message}`));
 // Ce qui est verrouillé ici : la 1re ligne « <repo> — <tâche> » (= titre de session dans
 // claude.ai), la brièveté (les règles de flotte vivent dans le CLAUDE.md du repo, plus dans le
 // prompt), et le « Closes #N » qui ferme l'issue d'ancrage au merge.
-async function checkCloudPrompt() {
-  const src = await readFile(join(ROOT, "app.js"), "utf8");
-  const start = src.indexOf("function composeCloudPrompt(");
-  if (start === -1) return "composeCloudPrompt() introuvable dans app.js";
-  // Le corps commence APRÈS la liste de paramètres — qui contient elle-même des accolades
-  // (destructuration `{repo, title, …}`) : compter depuis la 1re accolade partirait de là.
+// Découpe une déclaration `function <name>(...){...}` de son source. app.js est une IIFE
+// fermée (rien n'est exporté) : on teste ses fonctions pures en les ré-évaluant isolément.
+// 3e usage (composeCloudPrompt, parseBacklog, micFinals/micJoin) → factorisé (règle de flotte :
+// 3e récurrence = un utilitaire). Gère les accolades de la liste de paramètres (destructuration
+// `{repo, title, …}`), d'où le comptage des parenthèses avant de chercher le corps.
+function sliceFn(src, name) {
+  const start = src.indexOf(`function ${name}(`);
+  if (start === -1) return null;
   let paren = 0, bodyStart = -1;
   for (let i = src.indexOf("(", start); i < src.length; i++) {
     if (src[i] === "(") paren++;
     else if (src[i] === ")" && --paren === 0) { bodyStart = src.indexOf("{", i); break; }
   }
-  if (bodyStart === -1) return "composeCloudPrompt() : signature illisible";
-  let depth = 0, end = -1;
+  if (bodyStart === -1) return null;
+  let depth = 0;
   for (let i = bodyStart; i < src.length; i++) {
     if (src[i] === "{") depth++;
-    else if (src[i] === "}" && --depth === 0) { end = i + 1; break; }
+    else if (src[i] === "}" && --depth === 0) return src.slice(start, i + 1);
   }
-  if (end === -1) return "composeCloudPrompt() : accolades non appariées";
+  return null;
+}
 
+async function checkCloudPrompt() {
+  const src = await readFile(join(ROOT, "app.js"), "utf8");
+  const body = sliceFn(src, "composeCloudPrompt");
+  if (!body) return "composeCloudPrompt() introuvable / illisible dans app.js";
   let compose;
   try {
     compose = new Function("OWNER", "META", "model",
-      `${src.slice(start, end)}; return composeCloudPrompt;`)("Thibaud888", "claude-ops", null);
+      `${body}; return composeCloudPrompt;`)("Thibaud888", "claude-ops", null);
   } catch (e) { return `composeCloudPrompt() ne s'évalue pas : ${e.message}`; }
 
   const ancre = compose({ repo: "bulletins-viz", title: "Moyennes par trimestre", issue: 42 });
@@ -107,19 +114,11 @@ async function checkCloudPrompt() {
 // prompt de session cloud repart « éclaté », sans le contexte spécifique de la tâche.
 async function checkParseBacklog() {
   const src = await readFile(join(ROOT, "app.js"), "utf8");
-  const start = src.indexOf("function parseBacklog(");
-  if (start === -1) return "parseBacklog() introuvable dans app.js";
-  const bodyStart = src.indexOf("{", src.indexOf(")", start));
-  let depth = 0, end = -1;
-  for (let i = bodyStart; i < src.length; i++) {
-    if (src[i] === "{") depth++;
-    else if (src[i] === "}" && --depth === 0) { end = i + 1; break; }
-  }
-  if (end === -1) return "parseBacklog() : accolades non appariées";
-
+  const body = sliceFn(src, "parseBacklog");
+  if (!body) return "parseBacklog() introuvable / illisible dans app.js";
   let parse;
   try {
-    parse = new Function(`${src.slice(start, end)}; return parseBacklog;`)();
+    parse = new Function(`${body}; return parseBacklog;`)();
   } catch (e) { return `parseBacklog() ne s'évalue pas : ${e.message}`; }
 
   // Tâche cadrée avec tiret cadratin : titre court + développé complet séparés.
@@ -149,6 +148,45 @@ async function checkParseBacklog() {
   // Seuls les items ouverts comptent (les `- [x]` cochés sont hors backlog vivant).
   if (parse("- [x] Déjà fait — rien à lancer").length !== 0)
     return "un item coché `- [x]` ne doit pas remonter comme tâche ouverte";
+  return null;
+}
+
+// Contrat de l'anti-répétition du micro (issue #59). micFinals()/micJoin() sont les fonctions
+// PURES au cœur de la dictée : recomposer le texte finalisé à chaque événement au lieu de
+// l'accumuler. On simule ici le bug Android — un même segment final ré-émis / allongé sur
+// plusieurs événements ne doit JAMAIS se dupliquer en cascade (« quand quand quand… »).
+async function checkMic() {
+  const src = await readFile(join(ROOT, "app.js"), "utf8");
+  const j = sliceFn(src, "micJoin"), f = sliceFn(src, "micFinals");
+  if (!j || !f) return "micJoin()/micFinals() introuvables dans app.js";
+  let micJoin, micFinals;
+  try {
+    ({ micJoin, micFinals } = new Function(`${j}; ${f}; return {micJoin, micFinals};`)());
+  } catch (e) { return `micJoin/micFinals ne s'évaluent pas : ${e.message}`; }
+  const R = (t, isFinal = true) => ({ isFinal, 0: { transcript: t } });
+
+  // Segment final ré-émis puis allongé au fil des événements : on recompose à chaque fois,
+  // donc pas d'accumulation. C'était la cascade « le / le micro / le micro de… ».
+  const seq = [[R("quand")], [R("quand j'enregistre")], [R("quand j'enregistre à Paris")]];
+  let val = "";
+  for (const results of seq) val = micJoin("", micFinals(results));
+  if (val !== "quand j'enregistre à Paris")
+    return `répétition micro : attendu « quand j'enregistre à Paris », obtenu ${JSON.stringify(val)}`;
+
+  // Plusieurs segments finaux distincts : joints par une espace, chacun une fois.
+  if (micFinals([R("bonjour"), R("le monde")]) !== "bonjour le monde")
+    return "segments finaux multiples mal recomposés";
+  // L'interim (non final) n'entre pas dans le texte acquis.
+  if (micFinals([R("salut"), R("comm", false)]) !== "salut")
+    return "micFinals ne doit garder que le finalisé (l'interim reste en aperçu)";
+  // Commit inter-runs : Chrome relance de lui-même ; le texte des runs précédents est
+  // préservé (dans `committed`) sans être rejoué par le run suivant.
+  const committed = micJoin("", micFinals([R("bonjour le monde")]));
+  if (micJoin(committed, micFinals([R("comment ça va")])) !== "bonjour le monde comment ça va")
+    return "commit inter-runs : le texte des runs précédents doit être gardé sans doublon";
+  // Le contenu déjà présent dans le champ est préservé.
+  if (micJoin("Déjà là", micFinals([R("ajout")])) !== "Déjà là ajout")
+    return "le texte déjà saisi dans le champ doit être préservé";
   return null;
 }
 
@@ -199,6 +237,8 @@ server.listen(PORT, async () => {
     if (bad) return fail(`prompt de session cloud — ${bad}`);
     const badParse = await checkParseBacklog();
     if (badParse) return fail(`découpage BACKLOG.md — ${badParse}`);
+    const badMic = await checkMic();
+    if (badMic) return fail(`anti-répétition du micro — ${badMic}`);
     const badRade = checkRade();
     if (badRade) return fail(`dispatch en rade (scripts/rade.mjs) — ${badRade}`);
     server.close();

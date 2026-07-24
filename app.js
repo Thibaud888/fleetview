@@ -2179,6 +2179,18 @@ $("#ideas").addEventListener("keydown",(e)=>{
   // un seul mot reconnu. 8 s : au-dessus des 5 s demandées, sans laisser le micro ouvert
   // indéfiniment en cas d'oubli. L'arrêt manuel (2e appui) reste prioritaire à tout moment.
   const SILENCE_MS=8000;
+  // Cœur de l'anti-répétition, isolé en fonctions PURES (testées par scripts/verify.mjs).
+  // micFinals : recompose le texte finalisé d'un run à partir de TOUT `results` — jamais un
+  // append incrémental, donc un segment ré-émis par Android n'est pas rejoué. micJoin :
+  // assemble morceaux non vides avec une espace. Ensemble, ils rendent l'écriture idempotente.
+  function micJoin(){ return [...arguments].map(s=>String(s||"").trim()).filter(Boolean).join(" "); }
+  function micFinals(results){
+    const finals=[];
+    for(let i=0;i<results.length;i++){
+      if(results[i] && results[i].isFinal){ const t=String(results[i][0].transcript).trim(); if(t) finals.push(t); }
+    }
+    return finals.join(" ");
+  }
   let rec=null, activeBtn=null, micGranted=false, wantStop=false, silence=null;
   function clearSilence(){ if(silence){ clearTimeout(silence); silence=null; } }
   // Ré-armé à chaque mot reconnu : le compte à rebours ne court que sur du silence réel.
@@ -2207,27 +2219,35 @@ $("#ideas").addEventListener("keydown",(e)=>{
     if(!target) return;
     if(!(await ensureMic())) return;
     const interimEl=btn.dataset.micInterim?document.querySelector(btn.dataset.micInterim):null;
-    let base=target.value;
+    // Texte DÉJÀ acquis : le contenu du champ au démarrage, augmenté du finalisé des runs
+    // précédents (Chrome relance la reconnaissance de lui-même, cf. l'événement `end`).
+    let committed=target.value;
+    // Texte finalisé du run EN COURS. Recalculé À CHAQUE événement par micFinals() depuis TOUT
+    // `ev.results` (jamais accumulé depuis `resultIndex`) : c'était LA cause des mots répétés
+    // en cascade (« le / le micro / le micro de… », issue #59). Sur Android, un segment déjà
+    // finalisé est ré-émis dans les événements suivants ; l'ancien code, qui ajoutait à chaque
+    // fois, le rejouait. Recomposer tout le run rend l'écriture idempotente.
+    let runFinal="";
     const r=new Ctor();
     // `continuous=true` : ne pas rendre la main au premier blanc — c'est nous qui décidons
     // quand la dictée s'arrête (timer de silence ci-dessus ou 2e appui sur le bouton).
     r.lang="fr-FR"; r.interimResults=true; r.continuous=true;
     r.addEventListener("result",(ev)=>{
+      runFinal=micFinals(ev.results);           // recomposé, pas accumulé
+      target.value=micJoin(committed, runFinal);
       let interim="";
-      for(let i=ev.resultIndex;i<ev.results.length;i++){
-        const res=ev.results[i];
-        if(res.isFinal){
-          const t=res[0].transcript.trim();
-          if(t){ base = base ? (base+" "+t) : t; target.value=base; }
-        } else interim+=res[0].transcript;
-      }
+      for(let i=0;i<ev.results.length;i++){ if(!ev.results[i].isFinal) interim+=ev.results[i][0].transcript; }
       if(interimEl){
-        if(interim){ interimEl.textContent=interim; interimEl.hidden=false; }
+        if(interim.trim()){ interimEl.textContent=interim; interimEl.hidden=false; }
         else { interimEl.hidden=true; interimEl.textContent=""; }
       }
       armSilence(); // on parle : le compte à rebours repart de zéro
     });
     r.addEventListener("end",()=>{
+      // Committer le finalisé de CE run AVANT toute relance : le prochain run repart avec un
+      // `ev.results` vide, `committed` doit donc déjà porter ce qu'on vient de dire — sinon on
+      // le perdrait, ou (pire) on le rejouerait. C'est le pendant « inter-runs » de l'idempotence.
+      if(runFinal.trim()){ committed=micJoin(committed, runFinal); runFinal=""; }
       // Chrome termine la reconnaissance de lui-même (blanc court, `no-speech`, plafond de
       // durée) MÊME en `continuous` — c'est la vraie raison des coupures en pleine réflexion.
       // Tant que l'arrêt n'a pas été demandé, on relance donc en silence : c'est ce qui fait
