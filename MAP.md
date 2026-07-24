@@ -37,8 +37,9 @@ scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après
 | Questions à options (boutons) | `app.js:parseOptions()` + handlers `data-qr`/`data-iqr` | Convention `**Options :**`+`**Recommandation :** option N` → boutons de réponse en un clic |
 | « Que faire ? » / statuts de fil | `app.js:buildModel()` (tableaux `next`, `status` par fil) | La boîte en tête de vue projet + l'en-tête de chaque Dialogue |
 | Codex : question du cadrage | `app.js:renderIdeas()` (groupes ask/busy) + `sendIdeaReply()` | Question affichée sur place, réponse SANS @claude (relance auto côté claude-ops) |
-| Veilleur (notifs app fermée) | `scripts/veilleur.mjs` + `.github/workflows/veilleur.yml` | Cron 15 min ; fenêtre = depuis le précédent run terminé (repli 20 min), secrets `FLEET_GH_TOKEN`+`NTFY_TOPIC` |
+| Veilleur (notifs app fermée) | `scripts/veilleur.mjs` + `scripts/rade.mjs` + `.github/workflows/veilleur.yml` | Cron 15 min ; fenêtre = depuis le précédent run terminé (repli 20 min), secrets `FLEET_GH_TOKEN`+`NTFY_TOPIC` ; couvre aussi les dispatchs en rade (issue sans PR/session, PR verte non mergée) |
 | Journal de run | `app.js:renderJournalInto()` + `styles.css .log` | Actualisation ~4,5s pendant run, lien vers logs bruts |
+| Registre rafraîchissable | `app.js:refreshRegistry()`/`refreshRegistryStatus()` + bouton `#btn-refresh-registry` (⚙) | Déclenche `fleet-refresh.yml` (claude-ops), suit le run, relit (`refresh()`) ; auto en fin de « Nouveau projet » |
 | Changer l'icône | `icon.svg` puis `node scripts/icons.mjs` | Édite SVG, régénère PNG (192, 512, maskable, apple) |
 
 ## Flux de données
@@ -74,3 +75,5 @@ node scripts/verify.mjs          # Test : serveur HTTP natif, vérifie réponse
 - **Service worker** : cache la coquille (HTML/CSS/JS/icônes) ; JAMAIS l'API GitHub (cross-origin, réseau direct). Coupure réseau = app hors-ligne mais fonctionnelle.
 - **CSS variables** : thème = `html[data-fv-theme]` + vars root — défaut De Vinci, choix localStorage. Ajouter thème = scope + noms consistants.
 - **Icônes PNG** : générées automatiquement (`scripts/icons.mjs`), committées dans repo. Modifier = éditer `icon.svg` + relancer le script.
+- **Dispatch en rade** (`scripts/rade.mjs`, miroir de claude-ops `scripts/brief-rade.mjs`) : le veilleur est SANS ÉTAT — la détection ne doit notifier qu'AU FRANCHISSEMENT du seuil (`seuilFranchiDans()`), jamais à chaque cron tant que l'item reste en rade, sinon c'est un spam de 15 min.
+- **Registre rafraîchissable** : `fleet-refresh.yml` vit sur **claude-ops**, pas ici — un `workflow_dispatch` ne renvoie pas d'id de run (204 sans corps), `refreshRegistry()` repère le run le plus récent créé après le déclenchement pour le suivre. Si le workflow n'existe pas encore côté claude-ops, le déclenchement échoue en 404 (message explicite, pas un plantage).
