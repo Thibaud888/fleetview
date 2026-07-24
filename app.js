@@ -1751,19 +1751,28 @@ async function nativeNotify(ev){
   }catch(e){}
   try{ new Notification(ev.title, opts); return true; }catch(e){ return false; }
 }
+let notifPrimed=false; // false jusqu'au 1er relevé après ouverture (cf. runPush)
 async function runPush(){
-  if(demo || !model || !model.notify || !model.notify.length) return;
+  if(demo || !model || !model.notify) return;
   const wantNative = store.notif==="on" && "Notification" in window && Notification.permission==="granted";
   const url=store.ntfy;
   if(!wantNative && !url) return;
+  // À l'OUVERTURE de l'app, on cale sur l'existant sans notifier : les événements déjà là ont
+  // été couverts « app fermée » par le veilleur (ntfy) — les re-notifier en natif produisait le
+  // doublon « les deux en même temps quand j'ouvre l'app ». Le natif ne sert donc qu'aux
+  // événements qui APPARAISSENT app ouverte ; l'app fermée reste le rôle du veilleur.
+  if(!notifPrimed){ notifPrimed=true; seedNotified(); return; }
+  if(!model.notify.length) return;
   const seen=loadNotified(); let changed=false;
   for(const ev of model.notify){
     if(seen.has(ev.key)) continue;
-    // Marquer « vu » seulement si AU MOINS un canal a livré : sinon un échec réseau ntfy
-    // avalait la notification pour toujours — là, on retente au prochain relevé.
+    // UN SEUL canal par événement : le natif (app ouverte) est prioritaire, ntfy-in-app ne
+    // prend le relais que si le natif n'est pas actif — sinon la même alerte partait DEUX fois
+    // (native + ntfy). Marquer « vu » seulement si un canal a livré : sinon un échec réseau
+    // avalait la notification pour toujours, là on retente au prochain relevé.
     let delivered=false;
     if(wantNative){ try{ delivered=await nativeNotify(ev); }catch(e){} }
-    if(url){ try{ await publishNtfy(url, ev); delivered=true; }catch(e){ /* réseau : on ne bloque pas le relevé */ } }
+    if(!delivered && url){ try{ await publishNtfy(url, ev); delivered=true; }catch(e){ /* réseau : on ne bloque pas le relevé */ } }
     if(delivered){ seen.add(ev.key); changed=true; }
   }
   if(changed) saveNotified(seen);
@@ -2364,8 +2373,12 @@ async function refreshVeilleurStatus(){
     }
     const r=await gh(`/repos/${OWNER}/fleetview/actions/workflows/veilleur.yml/runs?per_page=1`);
     const run=(r.workflow_runs||[])[0];
-    if(!run){ el.textContent="○ pas encore de passage — le cron tourne toutes les 15 min"; return; }
-    el.textContent=(run.conclusion==="success"?"✓ actif":"⚠ dernier passage en échec")+" · "+timeAgo(run.run_started_at||run.created_at);
+    const active = run && run.conclusion==="success";
+    let txt = !run ? "○ pas encore de passage — le cron tourne toutes les 15 min"
+      : (active?"✓ actif":"⚠ dernier passage en échec")+" · "+timeAgo(run.run_started_at||run.created_at);
+    // Veilleur actif + champ ntfy rempli = la source du doublon signalé : on le dit sur place.
+    if(active && store.ntfy) txt += " · ⚠ champ ntfy ci-dessus rempli → doublon probable, vide-le";
+    el.textContent=txt;
   }catch(e){ el.textContent="état inconnu ("+errMsg(e)+")"; }
 }
 $("#btn-settings").addEventListener("click",()=>{

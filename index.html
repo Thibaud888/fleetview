@@ -264,10 +264,11 @@
         <span class="marginalia" id="notif-status" style="font-size:12.5px; align-self:center"></span>
       </div>
       <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
-        FleetView notifie <b>directement</b> ton appareil quand une action t'attend (question de Claude,
-        PR prête, question du cadrage) ; le clic ouvre le bon endroit. Marche tant que l'onglet FleetView
-        est <b>ouvert et visible</b> — onglet en arrière-plan ou app fermée, c'est le <b>veilleur</b>
-        qui prend le relais (ci-dessous).
+        Quand une action t'attend (question de Claude, changement prêt à valider…), FleetView te notifie
+        <b>directement sur cet appareil</b> ; le clic ouvre le bon endroit. Marche tant que FleetView est
+        <b>ouvert</b>. <b>App fermée, c'est le veilleur qui prend le relais</b> (plus bas) — tu n'as rien
+        de plus à régler, et une même alerte n'arrive <b>jamais deux fois</b> (à l'ouverture, l'app ne
+        re-sonne pas ce que le veilleur a déjà poussé).
       </p>
     </div>
     <div class="field">
@@ -279,10 +280,11 @@
         <button type="button" class="btn" id="ntfy-clear">Désactiver</button>
       </div>
       <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
-        Livré via l'app <b>ntfy</b> (abonne-toi au même sujet secret dans l'app). L'URL reste dans ce navigateur.
-        💡 Pour être notifié même <b>app fermée</b>, active le <b>veilleur de la flotte</b> : un cron du repo
-        fleetview qui surveille et pousse sur ntfy toutes les 15 min (guide §7). S'il est actif, laisse ce
-        champ-ci vide — sinon tu recevras tout en double.
+        Alternative aux notifications de l'appareil, via l'app <b>ntfy</b> (abonne-toi au même sujet secret).
+        L'URL reste dans ce navigateur. ⚠️ <b>Si le veilleur est actif</b> (état ci-dessous), <b>laisse ce
+        champ vide</b> : il pousse déjà sur ntfy quand l'app est fermée, le remplir ici te ferait tout
+        recevoir <b>en double</b>. 💡 Pour être notifié <b>app fermée</b>, c'est justement le veilleur
+        (cron du repo fleetview, 15 min, guide §7) — pas ce champ.
       </p>
       <p class="marginalia num" id="veilleur-status" style="margin:6px 0 0; font-size:12px">—</p>
     </div>

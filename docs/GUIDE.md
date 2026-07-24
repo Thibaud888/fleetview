@@ -280,8 +280,12 @@ quand il est actif :
    directement quand une action t'attend : question de Claude, PR prête, question du cadrage.
    Le clic ouvre le bon endroit. **Limite** : ça ne marche que tant que l'onglet FleetView
    est ouvert **et visible** (le relevé se met en pause en arrière-plan) — une page web
-   fermée ou cachée ne surveille pas.
-2. **ntfy depuis l'app** (⚙ → champ URL) — pareil, mais livré via l'app ntfy. Même limite.
+   fermée ou cachée ne surveille pas. À l'ouverture de l'app, elle **ne re-sonne pas** ce qui
+   était déjà là (le veilleur l'a couvert app fermée) : le natif ne notifie que ce qui apparaît
+   pendant que tu regardes.
+2. **ntfy depuis l'app** (⚙ → champ URL) — même chose, mais livré via l'app ntfy, en
+   **alternative** au natif (jamais les deux à la fois pour un même événement : le natif prime).
+   Même limite d'app ouverte.
 3. **Le veilleur de la flotte** — pour être notifié **même app fermée** : un cron GitHub
    Actions de CE repo (`veilleur.yml`, toutes les 15 min, gratuit car repo public) surveille
    la flotte côté serveur et pousse sur ntfy — questions de Claude, PR prêtes ou en échec,
@@ -296,7 +300,10 @@ quand il est actif :
    - c'est tout — sans les secrets, le cron sort immédiatement sans rien faire.
 
    > Si le veilleur est actif, laisse le champ ntfy de l'étage 2 **vide** : sinon chaque
-   > événement arrive en double (une fois par l'app ouverte, une fois par le veilleur).
+   > événement arrive en double (une fois par l'app, une fois par le veilleur). L'état du
+   > veilleur en ⚙ le signale explicitement quand le champ est rempli à tort. Les notifications
+   > de l'appareil (étage 1), elles, sont un canal distinct : elles ne doublonnent pas le
+   > veilleur (l'app ne re-sonne pas à l'ouverture ce qu'il a déjà poussé).
 
 ---
 
