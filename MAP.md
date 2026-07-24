@@ -18,7 +18,7 @@ icon-*.png, maskable-*.png, apple-touch-icon.png    Icônes générées (ne pas 
 .mcp.json               Config MCP : intégration serveur GitHub via HTTP (token env GITHUB_TOKEN)
 README.md               Page d'accueil : pitch rapide, installation express
 docs/GUIDE.md           Guide complet : concepts, usage, sécurité, archi, lanceur cloud + issue directe
-scripts/verify.mjs      Vérification : serveur HTTP natif (pas npx serve), teste démarrage et syntaxe
+scripts/verify.mjs      Vérification : serveur HTTP natif (pas npx serve) + contrats de fonctions pures (prompt cloud, parseBacklog, micFinals/micJoin, summarizeTitle, rade) découpées de app.js via sliceFn()
 scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après modif : node scripts/icons.mjs)
 .github/workflows/      Stubs kit : claude.yml (dispatch), map.yml, pages.yml (déploiement)
 ```
@@ -36,6 +36,11 @@ scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après
 | Issue directe (Actions) | `app.js:createRequest()`/`directBody()` | Crée l'issue `claude` (fire-and-forget), déclencheur `@claude` du kit ; le corps impose la convention question→Options |
 | Questions à options (boutons) | `app.js:parseOptions()` + handlers `data-qr`/`data-iqr` | Convention `**Options :**`+`**Recommandation :** option N` → boutons de réponse en un clic |
 | « Que faire ? » / statuts de fil | `app.js:buildModel()` (tableaux `next`, `status` par fil) | La boîte en tête de vue projet + l'en-tête de chaque Dialogue |
+| « À traiter » → droit au fil | `app.js:openDetail(id, focus)` + `focusThread()`/`focusPr()` | Une entrée « À traiter »/« Que faire ? » cible le fil (`data-thread`) ou la PR (`data-pr`), défile sur le dernier message et focalise la réponse (fini les 3 clics) |
+| Clore un fil de dialogue | `app.js:closeThread()` (action `thread-close`, bouton « ✕ Clore ») | Ferme l'issue en `not_planned` (commentaire de trace), quelle que soit la phase du fil |
+| Garde-fou « bon repo » | `app.js:detectOtherRepo()` + `showRepoConfirm()` + `doSend()` | Barre de confirmation avant de lancer (issue directe/cloud) : destination rappelée + bascule si un autre projet est nommé dans le texte |
+| Titre auto-résumé | `app.js:summarizeTitle()` | Titre optionnel : résumé depuis les détails si laissé vide (1re phrase courte ou amorce sur frontière de mot) |
+| Dictée sans répétition | `app.js:micFinals()`/`micJoin()` (dans `initMic`) | Recompose le texte du run à chaque événement (idempotent) : fin des mots répétés en cascade |
 | Codex : question du cadrage | `app.js:renderIdeas()` (groupes ask/busy) + `sendIdeaReply()` | Question affichée sur place, réponse SANS @claude (relance auto côté claude-ops) |
 | Veilleur (notifs app fermée) | `scripts/veilleur.mjs` + `scripts/rade.mjs` + `.github/workflows/veilleur.yml` | Cron 15 min ; fenêtre = depuis le précédent run terminé (repli 20 min), secrets `FLEET_GH_TOKEN`+`NTFY_TOPIC` ; couvre aussi les dispatchs en rade (issue sans PR/session, PR verte non mergée) |
 | Journal de run | `app.js:renderJournalInto()` + `styles.css .log` | Actualisation ~4,5s pendant run, lien vers logs bruts |
@@ -68,6 +73,7 @@ node scripts/verify.mjs          # Test : serveur HTTP natif, vérifie réponse
 - **Le fil d'une issue `cloud` est vide par construction** : le dialogue vit dans claude.ai. Donc aucun signal d'activité à attendre côté GitHub — `buildModel()` la classe « en session » et la règle « muette après 2 h » ne s'y applique pas (sinon toute session interactive virait « à débloquer » pendant la nuit).
 - **fleet.json dual-write** : aussi écrit par `scripts/fleet.mjs` (claude-ops) — modifier UNIQuement `statut`, préserver reste, gérer conflit `sha` (re-fetch avant PUT).
 - **Notifications ntfy** : sujet localStorage, jamais commité. Handlers cliquables passent `?repo=<id>` (ou `?idea=<n>`) et ouvrent le bon endroit. Test via bouton Tester. App fermée = rôle du **veilleur** (cron `veilleur.yml`, inactif sans ses 2 secrets).
+- **Notifications : deux canaux NON redondants** (`runPush`) — natif (app ouverte) **ou** ntfy-in-app, jamais les deux (le natif est prioritaire) ; et à l'ouverture l'app **ne re-notifie pas** ce que le veilleur a déjà poussé app fermée (amorçage `notifPrimed`+`seedNotified()` au 1er relevé). Le veilleur reste le canal « app fermée ». Ne pas réintroduire de double envoi natif+ntfy.
 - **Réponse à une idée du codex : JAMAIS de préfixe `@claude`** (ça déclencherait `claude.yml` sur claude-ops) — `sendIdeaReply()` poste un commentaire nu ; la relance du cadrage est automatique (déclencheur `issue_comment` de `codex-cadrage.yml` côté claude-ops).
 - **Convention « question à options »** partagée avec claude-ops : bloc `**Options :**` + `**Recommandation :** option N` — `parseOptions()` la lit ; si tu changes le format, change les DEUX côtés (codex-cadrage.yml et `directBody()`).
 - **Journal de run** : actualise ~4,5s tant que `run.status !== 'completed'`. Logs bruts indisponibles côté client (CORS) → lien vers GitHub Actions.
