@@ -234,6 +234,82 @@ async function checkMic() {
   return null;
 }
 
+// Isolation des runs — le contrat que les fonctions pures ne peuvent PAS garantir. Test de bout
+// en bout : on découpe l'IIFE `initMic` d'app.js et on la fait tourner sur des stubs DOM avec un
+// moteur factice qui reproduit le comportement Android observé le 2026-07-25 :
+//   1. relancer LA MÊME instance ne vide pas `ev.results` (le run suivant re-livre tout) ;
+//   2. le moteur RÉVISE un segment déjà rendu (« du micro » → « de micro »), donc l'anti-rejeu
+//      textuel de micDedup() ne peut pas le reconnaître.
+// Résultat sur l'ancien code : la dictée se recollait derrière elle-même (« micro micro micro
+// pourra micro pourra s'il… »). Ce que ce test verrouille : une instance NEUVE par run.
+async function checkMicRuns() {
+  const src = await readFile(join(ROOT, "app.js"), "utf8");
+  const start = src.indexOf("(function initMic(){");
+  const close = src.indexOf("\n})();", start);
+  if (start === -1 || close === -1) return "IIFE initMic introuvable dans app.js";
+  const iife = src.slice(start, close + "\n})();".length);
+
+  const champ = { value: "" };
+  const btn = { dataset: { mic: "#champ" }, classList: { add() {}, remove() {} } };
+  btn.closest = () => btn;
+  let onClick = null;
+  const doc = {
+    documentElement: { classList: { add() {} } },
+    addEventListener: (t, fn) => { if (t === "click") onClick = fn; },
+    querySelector: (sel) => (sel === "#champ" ? champ : null),
+  };
+  let courante = null;                       // l'instance que le code utilise en ce moment
+  class MoteurAndroid {
+    constructor() { this.h = {}; this.results = []; courante = this; }
+    addEventListener(t, fn) { (this.h[t] ||= []).push(fn); }
+    fire(t, ev) { (this.h[t] || []).forEach((fn) => fn(ev)); }
+    start() { courante = this; }             // NE vide pas `results` : c'est tout le bug
+    stop() { this.fire("end", {}); }
+    dit(txt) {
+      this.results.push({ isFinal: true, 0: { transcript: txt } });
+      this.fire("result", { resultIndex: 0, results: this.results });
+    }
+  }
+  try {
+    new Function("window", "document", "navigator", "toast", iife)(
+      { SpeechRecognition: MoteurAndroid }, doc, {}, () => {});
+  } catch (e) { return `initMic ne s'évalue pas : ${e.message}`; }
+  if (!onClick) return "initMic n'écoute pas les clics";
+  await onClick({ target: btn });
+  if (!courante) return "le clic sur [data-mic] ne démarre aucune reconnaissance";
+
+  const premiere = courante;
+  premiere.dit("ceci est un test du micro");
+  if (champ.value !== "ceci est un test du micro")
+    return `1er run : ${JSON.stringify(champ.value)}`;
+  premiere.fire("end", {});                  // coupure du moteur → relance
+  // Le moteur révise sa copie et poursuit. Si le code a réutilisé l'instance, `results` porte
+  // encore le 1er segment (révisé) et la phrase entière repart en double.
+  if (courante === premiere) premiere.results[0][0].transcript = "ceci est un test de micro";
+  courante.dit("pour voir s'il y a des répétitions");
+  if (champ.value !== "ceci est un test du micro pour voir s'il y a des répétitions")
+    return `relance : ${JSON.stringify(champ.value)} (la dictée se recolle derrière elle-même)`;
+  return null;
+}
+
+// Témoin de version + « Forcer la mise à jour » : le seul moyen, sur l'appareil, de distinguer
+// « le correctif ne marche pas » de « l'app sert encore son cache ». Une faute de frappe sur un
+// id casserait le bouton en silence (le site n'a pas de build pour le dire) : on vérifie donc
+// que le HTML et le JS parlent bien des mêmes.
+async function checkForceUpdate() {
+  const [html, js] = await Promise.all([
+    readFile(join(ROOT, "index.html"), "utf8"),
+    readFile(join(ROOT, "app.js"), "utf8"),
+  ]);
+  for (const id of ["btn-force-update", "app-version"]) {
+    if (!html.includes(`id="${id}"`)) return `#${id} absent d'index.html`;
+    if (!js.includes(`#${id}`)) return `#${id} présent dans le HTML mais jamais câblé dans app.js`;
+  }
+  if (!/caches\.delete/.test(js) || !/unregister\(\)/.test(js))
+    return "« Forcer la mise à jour » doit vider les caches ET désinscrire le service worker";
+  return null;
+}
+
 // Contrat du titre auto-résumé (issue point 11 : titre optionnel, résumé depuis la description).
 // summarizeTitle() est PURE : 1re phrase courte ou amorce coupée sur une frontière de mot,
 // capitalisée, sans ponctuation finale. Ce qui est verrouillé : jamais de mot tronqué en plein,
@@ -319,6 +395,10 @@ server.listen(PORT, async () => {
     if (badParse) return fail(`découpage BACKLOG.md — ${badParse}`);
     const badMic = await checkMic();
     if (badMic) return fail(`anti-répétition du micro — ${badMic}`);
+    const badRuns = await checkMicRuns();
+    if (badRuns) return fail(`isolation des runs du micro — ${badRuns}`);
+    const badUpdate = await checkForceUpdate();
+    if (badUpdate) return fail(`mise à jour de l'app — ${badUpdate}`);
     const badTitle = await checkTitle();
     if (badTitle) return fail(`titre auto-résumé — ${badTitle}`);
     const badRade = checkRade();
