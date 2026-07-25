@@ -329,6 +329,35 @@ d'onglets basse. Le token se saisit une fois par appareil.
 > Tant que le repo est **privé**, il n'y a pas de version en ligne (Pages gratuit = repo public).
 > On l'utilise alors en local. Passer en public n'expose **que l'outil**, jamais tes données (§10).
 
+### Dicter au 🎙
+
+Chaque champ de saisie a un bouton 🎙. Deux moteurs derrière, selon qu'une clé de transcription
+est posée dans ⚙ :
+
+| | Sans clé (par défaut) | Avec une clé (recommandé) |
+|---|---|---|
+| Ce qui se passe | le navigateur écoute et écrit **en direct** | on **enregistre**, et le texte arrive d'un bloc à l'arrêt |
+| Qualité en français | moyenne | nettement meilleure |
+| Répétitions | possibles (le moteur se relance et se répète — trois correctifs, cf. BACKLOG) | **impossibles** : un enregistrement = un texte, une fois |
+| Coût | 0 € | ~0,006 $ la minute dictée |
+| Attente | aucune | 1 à 3 s après l'arrêt |
+
+Poser la clé : ⚙ → **Dictée vocale** → colle la clé → *Enregistrer*. Elle reste dans **ce
+navigateur** (`localStorage`, comme le token GitHub) et ne part que vers l'API de transcription ;
+elle n'est jamais dans le repo. Pour la retirer : *Retirer* — le 🎙 revient au moteur du navigateur.
+
+Deux gestes : un appui démarre l'enregistrement (le bouton pulse en rouge), un second l'arrête et
+lance la transcription. Le texte **s'ajoute** à ce qui est déjà dans le champ. Micro oublié : coupé
+et transcrit automatiquement au bout de 3 minutes.
+
+### Une correction ne se voit pas ?
+
+L'app installée garde une copie locale et peut resservir une **ancienne version**. ⚙ →
+**Version de l'app** affiche la version du code en cours d'exécution ; le bouton **Forcer la mise
+à jour** vide les caches, désinscrit le service worker, relit les fichiers en réseau et recharge.
+Si la ligne « code : … » ne change pas après ça, c'est le fichier qui est vieux — pas le correctif
+qui rate.
+
 ---
 
 ## 10. Sécurité & vie privée
@@ -337,6 +366,10 @@ d'onglets basse. Le token se saisit une fois par appareil.
   est récupéré à l'exécution via l'API, avec ton token. Le code source ne contient que la
   logique + des données de démo **fictives**.
 - **Le token ne quitte pas ton navigateur** (`localStorage`), et ne parle qu'à `api.github.com`.
+- **La clé de transcription suit la même règle** (`localStorage`, jamais commitée) et ne part que
+  vers l'API de transcription, avec l'audio que tu viens de dicter. Conseillé : une clé
+  **restreinte à l'audio** et un **plafond mensuel** sur le projet — si l'appareil est perdu,
+  personne ne peut s'en servir ailleurs ni creuser la facture. `verify` refuse toute clé commitée.
 - **Rendre le repo public** met en ligne l'outil, pas tes projets. Un tiers qui l'ouvrirait
   verrait une page vierge tant qu'il n'a pas *son* token et *sa* propre flotte équipée du kit.
 - **Ne jamais commiter** de token, d'URL ntfy/Healthchecks ni de donnée privée dans ce repo

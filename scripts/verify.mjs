@@ -271,8 +271,9 @@ async function checkMicRuns() {
     }
   }
   try {
-    new Function("window", "document", "navigator", "toast", iife)(
-      { SpeechRecognition: MoteurAndroid }, doc, {}, () => {});
+    // `store.stt` vide = pas de clé : c'est bien le moteur du navigateur qu'on teste ici.
+    new Function("window", "document", "navigator", "toast", "store", iife)(
+      { SpeechRecognition: MoteurAndroid }, doc, {}, () => {}, { stt: "" });
   } catch (e) { return `initMic ne s'évalue pas : ${e.message}`; }
   if (!onClick) return "initMic n'écoute pas les clics";
   await onClick({ target: btn });
@@ -301,12 +302,126 @@ async function checkForceUpdate() {
     readFile(join(ROOT, "index.html"), "utf8"),
     readFile(join(ROOT, "app.js"), "utf8"),
   ]);
-  for (const id of ["btn-force-update", "app-version"]) {
+  for (const id of ["btn-force-update", "app-version", "stt-save", "stt-clear", "stt-input", "stt-status"]) {
     if (!html.includes(`id="${id}"`)) return `#${id} absent d'index.html`;
     if (!js.includes(`#${id}`)) return `#${id} présent dans le HTML mais jamais câblé dans app.js`;
   }
   if (!/caches\.delete/.test(js) || !/unregister\(\)/.test(js))
     return "« Forcer la mise à jour » doit vider les caches ET désinscrire le service worker";
+  // LE point qui manquait le 2026-07-25 : vider le cache du service worker ne touche pas au cache
+  // HTTP du navigateur, et le rechargement resservait l'ancien app.js. Sans `cache:"reload"`, le
+  // bouton ment.
+  if (!/cache:\s*["']reload["']/.test(js))
+    return "« Forcer la mise à jour » doit relire la coquille en réseau (fetch cache:\"reload\"), sinon le cache HTTP resert l'ancienne version";
+  // Marque de version DANS le code : c'est elle qui prouve quel app.js s'exécute.
+  if (!/const BUILD\s*=\s*["']/.test(js)) return "constante BUILD absente d'app.js";
+  return null;
+}
+
+// Dictée par transcription : fonctions pures (choix du conteneur audio, nom de fichier envoyé,
+// messages d'erreur) + la règle qui compte pour un repo PUBLIC — aucune clé dans le dépôt.
+async function checkStt() {
+  const js = await readFile(join(ROOT, "app.js"), "utf8");
+  const parts = ["sttMime", "sttFileName", "sttErr"].map((n) => sliceFn(js, n));
+  if (parts.some((p) => !p)) return "sttMime()/sttFileName()/sttErr() introuvables dans app.js";
+  let sttMime, sttFileName, sttErr;
+  try {
+    ({ sttMime, sttFileName, sttErr } =
+      new Function(`${parts.join(";")}; return {sttMime, sttFileName, sttErr};`)());
+  } catch (e) { return `fonctions de transcription non évaluables : ${e.message}` }
+
+  // L'extension envoyée doit correspondre à ce qui a été enregistré : l'API se fie à elle.
+  if (sttFileName("audio/webm;codecs=opus") !== "dictee.webm") return "webm → mauvaise extension";
+  if (sttFileName("audio/mp4") !== "dictee.mp4") return "mp4 (Safari) → mauvaise extension";
+  if (sttFileName("") !== "dictee.webm") return "type inconnu : replier sur .webm";
+  // Chrome/Android : opus disponible → on le prend. Safari : seul mp4 → on le prend aussi.
+  if (sttMime((m) => m.startsWith("audio/webm")) !== "audio/webm;codecs=opus")
+    return "sttMime doit préférer webm/opus quand il est disponible";
+  if (sttMime((m) => m === "audio/mp4") !== "audio/mp4")
+    return "sttMime doit retomber sur mp4 quand c'est le seul supporté";
+  if (sttMime(() => false) !== "") return "sttMime doit rendre \"\" quand rien n'est supporté";
+  if (sttMime(() => { throw new Error("boom"); }) !== "")
+    return "sttMime doit survivre à un isTypeSupported qui jette";
+  // Messages : une clé refusée et un crédit épuisé n'appellent pas le même geste.
+  if (!/clé/i.test(sttErr(401, ""))) return "401 doit parler de la clé";
+  if (!/quota|crédit/i.test(sttErr(429, ""))) return "429 doit parler du quota/crédit";
+
+  // Repo PUBLIC : aucune clé ne doit jamais être commitée (la vraie vit en localStorage).
+  const fichiers = ["app.js", "index.html", "sw.js", "README.md", "docs/GUIDE.md", "BACKLOG.md"];
+  for (const f of fichiers) {
+    const contenu = await readFile(join(ROOT, f), "utf8").catch(() => "");
+    if (/\bsk-[A-Za-z0-9_-]{20,}/.test(contenu)) return `une clé de transcription semble commitée dans ${f}`;
+    if (/\bgh[pousr]_[A-Za-z0-9]{20,}/.test(contenu)) return `un token GitHub semble commité dans ${f}`;
+  }
+  if (!/localStorage\.getItem\("fv-stt"\)/.test(js))
+    return "la clé de transcription doit venir du localStorage (jamais du code)";
+  return null;
+}
+
+// Parcours complet de la dictée par transcription, joué de bout en bout sur des stubs : appui →
+// enregistrement → 2e appui → envoi → texte ajouté au champ. Ce qui est verrouillé : l'appel part
+// bien vers l'API avec la clé du navigateur, le bon modèle, la langue et un nom de fichier
+// cohérent avec l'audio ; et le texte s'AJOUTE au champ sans écraser ce qui s'y trouve déjà.
+async function checkSttFlux() {
+  const src = await readFile(join(ROOT, "app.js"), "utf8");
+  const start = src.indexOf("(function initMic(){");
+  const close = src.indexOf("\n})();", start);
+  if (start === -1 || close === -1) return "IIFE initMic introuvable dans app.js";
+  const iife = src.slice(start, close + "\n})();".length);
+
+  const champ = { value: "Déjà écrit" };
+  const btn = { dataset: { mic: "#champ" }, classList: { add() {}, remove() {} }, disabled: false };
+  btn.closest = () => btn;
+  let onClick = null;
+  const doc = {
+    documentElement: { classList: { add() {} } },
+    addEventListener: (t, fn) => { if (t === "click") onClick = fn; },
+    querySelector: (sel) => (sel === "#champ" ? champ : null),
+  };
+  const piste = { stop() {} };
+  const nav = { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [piste] }) } };
+  let enr = null;
+  class FauxRecorder {
+    static isTypeSupported(t) { return t.startsWith("audio/webm"); }   // profil Chrome/Android
+    constructor(stream, opts) { this.h = {}; this.mimeType = opts && opts.mimeType; enr = this; }
+    addEventListener(t, fn) { (this.h[t] ||= []).push(fn); }
+    fire(t, ev) { (this.h[t] || []).forEach((fn) => fn(ev)); }
+    start() { this.started = true; }
+    stop() {
+      this.fire("dataavailable", { data: new Blob([new Uint8Array(4096)], { type: "audio/webm" }) });
+      this.fire("stop", {});
+    }
+  }
+  let appel = null;
+  const fauxFetch = async (url, opts) => {
+    appel = { url, opts };
+    return { ok: true, json: async () => ({ text: "ceci est un test du micro" }) };
+  };
+  try {
+    new Function("window", "document", "navigator", "toast", "store", "MediaRecorder", "fetch", iife)(
+      { MediaRecorder: FauxRecorder }, doc, nav, () => {}, { stt: "sk-clé-de-test" }, FauxRecorder, fauxFetch);
+  } catch (e) { return `initMic ne s'évalue pas : ${e.message}`; }
+  if (!onClick) return "initMic n'écoute pas les clics";
+
+  await onClick({ target: btn });                       // 1er appui : on enregistre
+  if (!enr || !enr.started) return "le 1er appui ne démarre pas d'enregistrement";
+  if (enr.mimeType !== "audio/webm;codecs=opus") return `conteneur choisi : ${enr.mimeType}`;
+  await onClick({ target: btn });                       // 2e appui : on arrête et on transcrit
+  for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)); // laisser l'envoi se dérouler
+
+  if (!appel) return "aucun envoi à l'API après l'arrêt de l'enregistrement";
+  if (!/^https:\/\/api\.openai\.com\/v1\/audio\/transcriptions$/.test(appel.url))
+    return `URL d'envoi inattendue : ${appel.url}`;
+  if (appel.opts.headers.Authorization !== "Bearer sk-clé-de-test")
+    return "la clé du navigateur n'est pas envoyée en Authorization";
+  const form = appel.opts.body;
+  if (typeof form.get !== "function") return "le corps envoyé n'est pas un FormData";
+  if (form.get("language") !== "fr") return "la langue doit être forcée en français";
+  if (!String(form.get("model")).includes("transcribe")) return `modèle inattendu : ${form.get("model")}`;
+  if (form.get("file") && form.get("file").name !== "dictee.webm")
+    return `nom de fichier envoyé : ${form.get("file").name} (l'API se fie à l'extension)`;
+  if (champ.value !== "Déjà écrit ceci est un test du micro")
+    return `champ après transcription : ${JSON.stringify(champ.value)}`;
   return null;
 }
 
@@ -399,6 +514,10 @@ server.listen(PORT, async () => {
     if (badRuns) return fail(`isolation des runs du micro — ${badRuns}`);
     const badUpdate = await checkForceUpdate();
     if (badUpdate) return fail(`mise à jour de l'app — ${badUpdate}`);
+    const badStt = await checkStt();
+    if (badStt) return fail(`dictée par transcription — ${badStt}`);
+    const badFlux = await checkSttFlux();
+    if (badFlux) return fail(`parcours de la dictée transcrite — ${badFlux}`);
     const badTitle = await checkTitle();
     if (badTitle) return fail(`titre auto-résumé — ${badTitle}`);
     const badRade = checkRade();

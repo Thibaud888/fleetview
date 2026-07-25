@@ -305,6 +305,22 @@
       <p class="marginalia num" id="registry-refresh-status" style="margin:6px 0 0; font-size:12px">—</p>
     </div>
     <div class="field">
+      <label for="stt-input">🎙 Dictée vocale</label>
+      <input id="stt-input" type="password" inputmode="text" autocomplete="off" spellcheck="false" placeholder="Clé de transcription (sk-…)">
+      <div class="settings-row">
+        <button type="button" class="btn" id="stt-save">Enregistrer</button>
+        <button type="button" class="btn" id="stt-clear">Retirer</button>
+      </div>
+      <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
+        Avec une clé, le 🎙 <b>enregistre puis transcrit</b> : le texte arrive d'un bloc quand tu
+        arrêtes — aucune répétition possible, et bien meilleur en français. Sans clé, on retombe
+        sur la reconnaissance du navigateur (en direct, mais capricieuse). Compte ~0,006 $ la
+        minute dictée. La clé reste dans <b>ce navigateur</b> et ne part que vers l'API de
+        transcription — jamais dans le repo, qui est public.
+      </p>
+      <p class="marginalia num" id="stt-status" style="margin:6px 0 0; font-size:12px">—</p>
+    </div>
+    <div class="field">
       <label>⬇️ Version de l'app</label>
       <div class="settings-row">
         <button type="button" class="btn" id="btn-force-update">Forcer la mise à jour</button>
