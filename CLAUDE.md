@@ -8,9 +8,11 @@
 - **Lis `MAP.md` avant toute exploration** ; n'explore que ce qu'elle ne couvre pas.
 - **Aucune session ne rend la main sans avoir vérifié** : lance `node scripts/verify.mjs`
   (ou build + tests) et regarde le résultat avant de conclure.
-- Branche + PR, **jamais de push direct sur `main`**. Commits **en français**.
-- 1 session = 1 item de `BACKLOG.md` = 1 PR ; mets à jour `BACKLOG.md` en fin de session.
-- 3e récurrence d'une même tâche → écris un script réutilisable (`scripts/`), pas juste le résultat.
+- **Branche + PR** — jamais de push direct sur `main`. Commits **en français**.
+- **1 session = 1 item = 1 PR** — un item de `BACKLOG.md` par session ; mets à jour
+  `BACKLOG.md` en fin de session.
+- **Écris l'outil, pas l'output** — à la 3e récurrence d'une même tâche, écris un script
+  réutilisable (`scripts/`), pas juste le résultat.
 - **La PR se merge automatiquement dès que la CI est verte** (pas d'attente de relecture par
   défaut). CI rouge → PR laissée ouverte, jamais mergée à l'aveugle. **Repo sans CI** : le
   merge auto exige une section `## Vérification` (commande + résultat) dans le corps de la PR.
