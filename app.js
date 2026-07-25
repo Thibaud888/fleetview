@@ -29,6 +29,10 @@ const store = {
   // Sujet ntfy pour les notifications push (URL secrète : reste en localStorage, jamais commitée).
   get ntfy(){ try{ return localStorage.getItem("fv-ntfy")||""; }catch(e){ return ""; } },
   set ntfy(v){ try{ v?localStorage.setItem("fv-ntfy",v):localStorage.removeItem("fv-ntfy"); }catch(e){} },
+  // Clé de transcription (dictée 🎙). Même règle que le token GitHub : elle vit dans CE
+  // navigateur et ne part que vers l'API de transcription — jamais dans le repo, qui est public.
+  get stt(){ try{ return localStorage.getItem("fv-stt")||""; }catch(e){ return ""; } },
+  set stt(v){ try{ v?localStorage.setItem("fv-stt",v):localStorage.removeItem("fv-stt"); }catch(e){} },
   // Notifications natives de l'appareil (API Notification, sans service tiers).
   get notif(){ try{ return localStorage.getItem("fv-notif")||""; }catch(e){ return ""; } },
   set notif(v){ try{ v?localStorage.setItem("fv-notif",v):localStorage.removeItem("fv-notif"); }catch(e){} },
@@ -2306,7 +2310,15 @@ $("#ideas").addEventListener("keydown",(e)=>{
    affiche le texte provisoire. Le texte final s'AJOUTE au contenu, sans l'écraser. */
 (function initMic(){
   const Ctor=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!Ctor){ document.documentElement.classList.add("no-mic"); return; } // API absente : boutons masqués en CSS
+  // Deux moteurs derrière le même bouton 🎙 :
+  //  - TRANSCRIPTION (par défaut dès qu'une clé est posée en ⚙) : on enregistre, on envoie
+  //    l'audio d'un bloc à la fin, on reçoit le texte. Un audio = un texte, donc la famille de
+  //    bugs « mots répétés » (relances, segments rejoués, révisions) n'existe pas ;
+  //  - RECONNAISSANCE DU NAVIGATEUR (repli, sans clé) : écoute en direct, texte au fil de l'eau,
+  //    mais dépendante du service de Google et de ses relances — c'est elle qui a demandé trois
+  //    correctifs (#63, #65, #67).
+  const canRecord=!!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  if(!Ctor && !canRecord){ document.documentElement.classList.add("no-mic"); return; } // rien de possible : boutons masqués en CSS
   // Délai de VRAI silence avant fermeture automatique du micro.
   // Avant, `continuous=false` laissait l'endpointing natif du navigateur couper à la PREMIÈRE
   // pause (~1-2 s) : impossible de réfléchir en dictant, la dictée se fermait en pleine phrase.
@@ -2375,9 +2387,97 @@ $("#ideas").addEventListener("keydown",(e)=>{
       return false;
     }
   }
+  /* ---- Moteur 1 : transcription (enregistre puis envoie l'audio) -------------------------
+     Aucun texte en direct, mais aucune répétition possible : un enregistrement donne un texte,
+     une fois. La clé vit dans le navigateur (localStorage, comme le token GitHub) et ne part
+     que vers l'API de transcription — jamais dans le repo, qui est public. */
+  const STT_URL="https://api.openai.com/v1/audio/transcriptions";
+  const STT_MODEL="gpt-4o-transcribe";   // ~0,006 $/min ; « gpt-4o-mini-transcribe » = moitié prix
+  const REC_MAX_MS=180000;               // micro oublié : on coupe et on transcrit à 3 min
+  // Conteneur audio : Chrome/Android donne du webm/opus, Safari du mp4. L'API se fie à
+  // l'extension du fichier envoyé — elle doit correspondre à ce qui a été réellement enregistré.
+  function sttMime(supported){
+    const cands=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg;codecs=opus"];
+    for(const m of cands){ try{ if(supported(m)) return m; }catch(e){} }
+    return "";
+  }
+  function sttFileName(mime){
+    if(/mp4|m4a|aac/i.test(mime)) return "dictee.mp4";
+    if(/ogg/i.test(mime)) return "dictee.ogg";
+    if(/wav/i.test(mime)) return "dictee.wav";
+    return "dictee.webm";
+  }
+  // Messages en clair : une clé refusée et un quota épuisé ne se règlent pas pareil.
+  function sttErr(status, corps){
+    if(status===401||status===403) return "Clé de transcription refusée (⚙ → Dictée vocale) : vérifie-la ou recrée-la.";
+    if(status===429) return "Transcription : quota ou crédit OpenAI épuisé — recharge le compte, ou dicte plus tard.";
+    if(status===413) return "Enregistrement trop long pour l'API : refais-le en plusieurs fois.";
+    return "Transcription impossible ("+status+")"+(corps?" : "+String(corps).slice(0,140):"");
+  }
+  let recorder=null, recBtn=null, recTimer=null;
+  function stopRecorder(){
+    if(recTimer){ clearTimeout(recTimer); recTimer=null; }
+    if(recorder){ try{ recorder.stop(); }catch(e){} }
+  }
+  async function transcrire(blob, mime){
+    const fd=new FormData();
+    fd.append("file", blob, sttFileName(mime));
+    fd.append("model", STT_MODEL);
+    fd.append("language", "fr");
+    fd.append("response_format", "json");
+    const res=await fetch(STT_URL,{ method:"POST", headers:{ Authorization:"Bearer "+store.stt }, body:fd });
+    if(!res.ok){ throw new Error(sttErr(res.status, await res.text().catch(()=>""))); }
+    const j=await res.json();
+    return String(j.text||"").trim();
+  }
+  async function dicteeTranscrite(btn,target,interimEl){
+    let stream;
+    try{ stream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+    catch(err){
+      toast("Micro bloqué. Android : Paramètres → Applications → Chrome (ou FleetView) → Autorisations → Microphone.", 8000);
+      return;
+    }
+    const mime=sttMime((t)=>window.MediaRecorder.isTypeSupported(t));
+    let mr;
+    try{ mr=new MediaRecorder(stream, mime?{mimeType:mime}:undefined); }
+    catch(err){ stream.getTracks().forEach(t=>t.stop()); toast("Enregistrement impossible sur cet appareil.", 6000); return; }
+    const morceaux=[];
+    mr.addEventListener("dataavailable",(e)=>{ if(e.data && e.data.size) morceaux.push(e.data); });
+    mr.addEventListener("stop", async ()=>{
+      stream.getTracks().forEach(t=>t.stop());
+      recorder=null; recBtn=null;
+      btn.classList.remove("on");
+      const blob=new Blob(morceaux,{ type:mime||"audio/webm" });
+      if(blob.size<1500){ if(interimEl){ interimEl.hidden=true; interimEl.textContent=""; } return; } // rien d'audible
+      btn.disabled=true;
+      if(interimEl){ interimEl.textContent="Transcription en cours…"; interimEl.hidden=false; }
+      try{
+        const txt=await transcrire(blob, mime);
+        if(txt) target.value=micJoin(target.value, txt); // s'AJOUTE au champ, comme l'autre moteur
+        else toast("Rien de compris dans cet enregistrement.", 4000);
+      }catch(err){ toast(err.message||"Transcription impossible.", 8000); }
+      btn.disabled=false;
+      if(interimEl){ interimEl.hidden=true; interimEl.textContent=""; }
+    });
+    try{ mr.start(); }
+    catch(err){ stream.getTracks().forEach(t=>t.stop()); toast("Enregistrement impossible sur cet appareil.", 6000); return; }
+    recorder=mr; recBtn=btn; btn.classList.add("on");
+    if(interimEl){ interimEl.textContent="Enregistrement… appuie de nouveau sur 🎙 pour transcrire."; interimEl.hidden=false; }
+    recTimer=setTimeout(stopRecorder, REC_MAX_MS);
+  }
   document.addEventListener("click",async(e)=>{
     const btn=e.target.closest("[data-mic]");
     if(!btn) return;
+    // Chemin transcription : dès qu'une clé est posée (et qu'on sait enregistrer).
+    if(store.stt && canRecord){
+      if(recBtn===btn){ stopRecorder(); return; }            // 2e appui : on arrête et on transcrit
+      stopRecorder();                                        // bascule vers un autre champ
+      const cible=document.querySelector(btn.dataset.mic);
+      if(!cible) return;
+      const apercu=btn.dataset.micInterim?document.querySelector(btn.dataset.micInterim):null;
+      return dicteeTranscrite(btn, cible, apercu);
+    }
+    if(!Ctor) return;                                        // pas de clé et pas de reconnaissance
     if(activeBtn===btn){ wantStop=true; stopRec(); return; } // second appui : arrêt manuel
     wantStop=true; stopRec();                                // bascule vers un autre champ
     const target=document.querySelector(btn.dataset.mic);
@@ -2498,35 +2598,67 @@ async function refreshVeilleurStatus(){
   }catch(e){ el.textContent="état inconnu ("+errMsg(e)+")"; }
 }
 // Quelle version tourne VRAIMENT sur cet appareil ? Sans ce témoin, impossible de distinguer
-// « le correctif ne marche pas » de « l'app sert encore l'ancienne version depuis son cache » —
-// ça a coûté deux allers-retours sur le micro (2026-07-25). Le nom du cache du service worker
-// (`fleetview-shell-vN`, bumpé à chaque correctif visible) est la seule marque de version
-// disponible sur un site statique sans étape de build.
+// « le correctif ne marche pas » de « l'app sert encore l'ancienne version » — ça a coûté deux
+// allers-retours sur le micro (2026-07-25). Le nom du cache du service worker ne suffit PAS :
+// il dit ce que le service worker a mis de côté, pas quel `app.js` le navigateur exécute. D'où
+// cette marque, DANS le code lui-même : si elle ne change pas après « Forcer la mise à jour »,
+// c'est le fichier qui est vieux, pas le correctif qui rate. À bumper à chaque correctif visible,
+// avec `VERSION` dans sw.js (verify le vérifie).
+const BUILD="2026-07-26 · dictée par transcription";
 async function refreshAppVersion(){
   const el=$("#app-version"); if(!el) return;
-  if(!window.caches){ el.textContent="pas de cache local (version toujours fraîche)"; return; }
+  let txt="code : "+BUILD;
   try{
-    const keys=await caches.keys();
-    const shell=keys.filter(k=>k.startsWith("fleetview-shell-"));
-    el.textContent = shell.length ? "coquille servie : "+shell.join(", ") : "aucune coquille en cache";
-  }catch(e){ el.textContent="version inconnue"; }
+    if(window.caches){
+      const shell=(await caches.keys()).filter(k=>k.startsWith("fleetview-shell-"));
+      txt += " · coquille : "+(shell.length?shell.join(", "):"aucune en cache");
+    }
+  }catch(e){ /* le code reste affiché : c'est lui qui compte */ }
+  el.textContent=txt;
 }
-// Vidage complet + désinscription du service worker, puis rechargement : la version en ligne
-// est reprise au premier chargement, sans passer par les réglages du navigateur (impraticables
-// sur téléphone). Le service worker se réinstalle tout seul au rechargement.
+// Remise à neuf complète, puis rechargement. Vider les caches du service worker NE SUFFIT PAS :
+// le navigateur garde son propre cache HTTP (GitHub Pages sert avec un max-age), et un simple
+// `reload()` peut donc resservir l'ancien app.js — c'est très probablement ce qui s'est passé le
+// 2026-07-25. On force donc, en plus, une relecture réseau de la coquille (`cache:"reload"`
+// écrase l'entrée du cache HTTP), avant de recharger. Le service worker se réinstalle tout seul.
 async function forceUpdate(){
-  const btn=$("#btn-force-update"); if(btn) btn.disabled=true;
+  const btn=$("#btn-force-update"); if(btn){ btn.disabled=true; btn.textContent="Mise à jour…"; }
+  // Sans query : c'est l'entrée du cache HTTP de CES URL-là qu'il faut écraser (une URL
+  // différente, `?maj=…`, laisserait l'ancienne entrée intacte). « ./ » = la page elle-même.
+  const shell=["./","index.html","app.js","styles.css","sw.js","manifest.webmanifest"];
   try{
-    if(window.caches){ const keys=await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k))); }
     if(navigator.serviceWorker){
       const regs=await navigator.serviceWorker.getRegistrations();
       await Promise.all(regs.map(r=>r.unregister().catch(()=>{})));
     }
+    if(window.caches){ const keys=await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k))); }
+    await Promise.all(shell.map(f=>fetch(f,{cache:"reload"}).catch(()=>{})));
   }catch(e){ /* on recharge quand même : au pire l'ancienne version revient */ }
   location.reload();
 }
+// Clé de transcription : jamais réaffichée en clair (comme le token) — on montre son état et
+// ses 4 derniers caractères, de quoi reconnaître laquelle est posée sans l'exposer.
+function updateSttStatus(){
+  const el=$("#stt-status"); if(!el) return;
+  const k=store.stt;
+  if(!k){ el.textContent="aucune clé — le 🎙 utilise la reconnaissance du navigateur (repli)"; return; }
+  el.textContent="✓ clé posée (…"+k.slice(-4)+") — le 🎙 enregistre puis transcrit";
+}
+$("#stt-save").addEventListener("click",()=>{
+  const v=$("#stt-input").value.trim();
+  if(!v){ toast("Colle d'abord la clé de transcription.", 4000); return; }
+  // Garde-fou : une clé GitHub collée ici partirait chez OpenAI. Les préfixes ne se recoupent pas.
+  if(/^gh[pousr]_/.test(v)){ toast("C'est un token GitHub, pas une clé de transcription — rien n'a été enregistré.", 7000); return; }
+  store.stt=v; $("#stt-input").value=""; updateSttStatus();
+  toast("Clé enregistrée : le 🎙 passe en mode « enregistre puis transcrit ».", 5000);
+});
+$("#stt-clear").addEventListener("click",()=>{
+  store.stt=""; $("#stt-input").value=""; updateSttStatus();
+  toast("Clé retirée : le 🎙 revient à la reconnaissance du navigateur.", 5000);
+});
 $("#btn-settings").addEventListener("click",()=>{
   $("#ntfy-input").value=store.ntfy;
+  $("#stt-input").value=""; updateSttStatus();
   renderRate(); updateNotifStatus(); refreshVeilleurStatus(); refreshRegistryStatus(); refreshAppVersion();
   modalSettings.showModal();
 });
