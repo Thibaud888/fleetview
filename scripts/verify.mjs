@@ -157,12 +157,13 @@ async function checkParseBacklog() {
 // plusieurs événements ne doit JAMAIS se dupliquer en cascade (« quand quand quand… »).
 async function checkMic() {
   const src = await readFile(join(ROOT, "app.js"), "utf8");
-  const j = sliceFn(src, "micJoin"), f = sliceFn(src, "micFinals");
-  if (!j || !f) return "micJoin()/micFinals() introuvables dans app.js";
-  let micJoin, micFinals;
+  const j = sliceFn(src, "micJoin"), f = sliceFn(src, "micFinals"), d = sliceFn(src, "micDedup");
+  if (!j || !f || !d) return "micJoin()/micFinals()/micDedup() introuvables dans app.js";
+  let micJoin, micFinals, micDedup;
   try {
-    ({ micJoin, micFinals } = new Function(`${j}; ${f}; return {micJoin, micFinals};`)());
-  } catch (e) { return `micJoin/micFinals ne s'évaluent pas : ${e.message}`; }
+    ({ micJoin, micFinals, micDedup } =
+      new Function(`${j}; ${f}; ${d}; return {micJoin, micFinals, micDedup};`)());
+  } catch (e) { return `micJoin/micFinals/micDedup ne s'évaluent pas : ${e.message}`; }
   const R = (t, isFinal = true) => ({ isFinal, 0: { transcript: t } });
 
   // Segment final ré-émis puis allongé au fil des événements : on recompose à chaque fois,
@@ -187,6 +188,49 @@ async function checkMic() {
   // Le contenu déjà présent dans le champ est préservé.
   if (micJoin("Déjà là", micFinals([R("ajout")])) !== "Déjà là ajout")
     return "le texte déjà saisi dans le champ doit être préservé";
+
+  // --- 2e étage : rejeu INTER-RUNS (le trou laissé par le lot 9) ---------------------------
+  // `continuous` ne survit pas aux coupures du moteur : on relance, et le moteur rejoue dans le
+  // nouveau run ce qu'il venait de finaliser. `committed` le portant déjà, il se réécrivait
+  // derrière — les mots se répétaient à CHAQUE pause. micDedup() retire cette reprise.
+  if (micDedup("bonjour le monde comment ça va", "bonjour le monde", "bonjour le monde") !== "comment ça va")
+    return "rejeu inter-runs : la reprise du texte déjà acquis doit être retirée";
+  if (micDedup("bonjour le monde", "bonjour le monde", "bonjour le monde") !== "")
+    return "rejeu intégral : le run ne doit rien ajouter";
+  // Rejeu de la SEULE fin de l'acquis (le moteur ne rejoue pas toujours tout).
+  if (micDedup("le monde et la suite", "bonjour le monde", "bonjour le monde") !== "et la suite")
+    return "rejeu partiel (fin de l'acquis) non retiré";
+  // Casse et ponctuation varient d'un run à l'autre : la comparaison doit rester insensible.
+  if (micDedup("Bonjour le monde, comment ça va", "bonjour le monde", "") !== "comment ça va")
+    return "rejeu inter-runs : casse/ponctuation doivent être ignorées à la comparaison";
+  // Vraie parole, aucun rejeu : rien ne doit disparaître.
+  if (micDedup("comment ça va", "bonjour le monde", "bonjour le monde") !== "comment ça va")
+    return "micDedup ne doit pas rogner un run qui ne rejoue rien";
+  // Garde-fou anti-zèle : un mot isolé repris en tête de phrase est de la VRAIE parole
+  // (« … le micro » puis « micro qui répète ») — on ne l'efface que s'il est à lui seul tout
+  // le texte de référence.
+  if (micDedup("micro qui répète", "je teste le micro", "je teste le micro") !== "micro qui répète")
+    return "micDedup trop zélé : un mot isolé en tête ne doit pas être avalé";
+  if (micDedup("bonjour tout le monde", "bonjour", "bonjour") !== "tout le monde")
+    return "référence d'un seul mot intégralement rejouée : elle doit être retirée";
+
+  // Boucle complète d'une dictée avec relance : run 1, coupure, run 2 qui rejoue le run 1.
+  let acquis = "", dictee = "", lastRun = "", runFinal = "";
+  const evenement = (results) => {
+    runFinal = micDedup(micFinals(results), dictee, lastRun);
+    return micJoin(acquis, runFinal);
+  };
+  const fin = () => {
+    if (runFinal.trim()) {
+      acquis = micJoin(acquis, runFinal);
+      dictee = micJoin(dictee, runFinal); lastRun = runFinal; runFinal = "";
+    }
+  };
+  evenement([R("j'enregistre avec le micro")]);
+  fin();                                                     // coupure moteur → relance
+  const apres = evenement([R("j'enregistre avec le micro"), R("pour compléter la case")]);
+  if (apres !== "j'enregistre avec le micro pour compléter la case")
+    return `dictée avec relance : ${JSON.stringify(apres)} (mots répétés)`;
   return null;
 }
 
