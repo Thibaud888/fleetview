@@ -1262,8 +1262,9 @@ function directBody(title,desc){
 Règles de la flotte :
 - Lis MAP.md et CLAUDE.md d'abord ; n'explore que ce qu'ils ne couvrent pas.
 - Vérifie avant de conclure (script verify du repo, sinon build + tests) et dis dans la PR ce qui a été vérifié.
-- Mets à jour BACKLOG.md dans la PR.
-- Si tu dois me poser une question : UNE seule à la fois, avec un bloc « **Options :** » de 2 à 4 réponses numérotées (une ligne chacune, < 140 caractères, concrètes) puis une ligne « **Recommandation :** option N — pourquoi ». Je peux répondre par un simple numéro.
+- Mets à jour BACKLOG.md dans la PR — titre d'item en clair (ce que ça change pour moi, en français courant), le jargon après le tiret.
+- Règle du clair : je te lis depuis mon téléphone, sans casquette technique. Ce qui m'est destiné commence par du français courant, sans nom de fichier ni de fonction, sans sigle ; le détail technique vient après ou dans un repli \`<details>\`.
+- Si tu dois me poser une question : UNE seule à la fois, ouverte par une ligne en clair (le choix vu de mon côté), puis un bloc « **Options :** » de 2 à 4 réponses numérotées (une ligne chacune, < 140 caractères) décrites par leur CONSÉQUENCE — ce que je verrai, ce que ça coûte — et non par leur mécanisme, puis une ligne « **Recommandation :** option N — pourquoi ». Le détail technique va dans un \`<details>\` sous la question. Je peux répondre par un simple numéro.
 
 _Créée depuis FleetView._`;
 }
