@@ -35,6 +35,10 @@ Convention : **1 item de backlog = 1 session = 1 PR.**
 - **Format d'un item.** `- [ ] (Px) titre — contexte et definition of done`, sur une ligne.
   `/backlog ajoute` reformule l'idée à ce format (droit à UNE question en cas de grosse
   ambiguïté seulement). Conserver tel quel un éventuel 📱 en fin d'item (provenance codex).
+  **Règle du clair** (cf. `CLAUDE.md`) : le titre se lit sans être technicien — ce que ça change
+  pour Thibaud, en français courant, sans nom de fichier ni de fonction, sans sigle ni
+  anglicisme non traduit ; le jargon vit après le tiret. Vaut aussi à la relecture : un titre
+  illisible se reformule au passage, sans toucher au détail.
 - **Anti-collision.** Avant tout traitement ou écriture : si une issue `claude` est ouverte sur
   ce repo (`gh issue list --label claude --state open`), le signaler (sa PR touchera aussi
   BACKLOG.md) et ne continuer qu'avec l'accord de l'utilisateur.

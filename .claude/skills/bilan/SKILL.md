@@ -16,6 +16,8 @@ Rituel de fin de session pour ne rien perdre entre deux sessions.
 Repérer le `BACKLOG.md` pertinent (racine du repo projet, ou
 `claude-ops/chantiers/BACKLOG.md` pour un chantier d'optimisation). Mettre à jour le statut
 des items traités (🔲→🔄→✅ + lien PR) et ajouter les items découverts pendant la session.
+Tout item ajouté suit la **règle du clair** (`CLAUDE.md`) : titre lisible par un non-technicien
+(ce que ça change pour Thibaud), jargon après le tiret dans le contexte et la DoD.
 
 ## 3. Mémoire persistante
 Écrire en mémoire les **décisions durables** (pas l'éphémère) : préférences confirmées,
