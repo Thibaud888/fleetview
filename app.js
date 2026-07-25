@@ -2326,6 +2326,35 @@ $("#ideas").addEventListener("keydown",(e)=>{
     }
     return finals.join(" ");
   }
+  // micDedup : anti-rejeu INTER-RUNS, le second étage de l'anti-répétition. micFinals() rend
+  // l'écriture idempotente À L'INTÉRIEUR d'un run, mais `continuous` ne survit pas aux coupures
+  // du moteur : on relance (cf. `end`), et le moteur peut REJOUER dans le nouveau run ce qu'il
+  // venait de finaliser dans le précédent. Comme ce texte est déjà dans `committed`, il se
+  // réécrivait derrière : les mots se répétaient à chaque pause malgré le correctif intra-run.
+  // On retire donc du run la reprise EXACTE d'un texte déjà acquis (comparaison normalisée : la
+  // casse et la ponctuation varient d'un run à l'autre). Jamais de rapprochement
+  // approximatif — un vrai mot répété par l'utilisateur doit survivre : une reprise d'UN SEUL
+  // mot n'est retirée que si elle constitue à elle seule tout le texte de référence.
+  function micDedup(run){
+    const norm=(s)=>String(s||"").trim().toLowerCase()
+      .replace(/[.,;:!?…]/gu,"").replace(/\s+/gu," ").trim();
+    const mots=String(run||"").trim().split(/\s+/u).filter(Boolean);
+    const b=norm(run);
+    if(!b) return "";
+    for(let a=1;a<arguments.length;a++){
+      const ref=norm(arguments[a]).split(" ").filter(Boolean);
+      if(!ref.length) continue;
+      // Du plus long au plus court : le moteur rejoue parfois tout l'acquis, parfois le seul
+      // run précédent, parfois sa fin.
+      for(let k=ref.length;k>=1;k--){
+        if(k<2 && k<ref.length) break; // reprise d'un mot isolé : trop ambigu pour être retirée
+        const s=ref.slice(ref.length-k).join(" ");
+        if(b===s) return "";
+        if(b.startsWith(s+" ")) return mots.slice(k).join(" ");
+      }
+    }
+    return mots.join(" ");
+  }
   let rec=null, activeBtn=null, micGranted=false, wantStop=false, silence=null;
   function clearSilence(){ if(silence){ clearTimeout(silence); silence=null; } }
   // Ré-armé à chaque mot reconnu : le compte à rebours ne court que sur du silence réel.
@@ -2363,12 +2392,18 @@ $("#ideas").addEventListener("keydown",(e)=>{
     // finalisé est ré-émis dans les événements suivants ; l'ancien code, qui ajoutait à chaque
     // fois, le rejouait. Recomposer tout le run rend l'écriture idempotente.
     let runFinal="";
+    // Mémoire des runs précédents, pour micDedup() : `dictee` = tout ce que LA DICTÉE a acquis
+    // (hors texte déjà présent dans le champ), `lastRun` = le seul run précédent. Le moteur
+    // rejoue tantôt l'un, tantôt l'autre : on lui oppose les deux.
+    let dictee="", lastRun="";
     const r=new Ctor();
     // `continuous=true` : ne pas rendre la main au premier blanc — c'est nous qui décidons
     // quand la dictée s'arrête (timer de silence ci-dessus ou 2e appui sur le bouton).
     r.lang="fr-FR"; r.interimResults=true; r.continuous=true;
     r.addEventListener("result",(ev)=>{
-      runFinal=micFinals(ev.results);           // recomposé, pas accumulé
+      // Recomposé (jamais accumulé), puis débarrassé de ce que le moteur rejoue du run
+      // précédent — les deux étages de l'anti-répétition, intra-run puis inter-runs.
+      runFinal=micDedup(micFinals(ev.results), dictee, lastRun);
       target.value=micJoin(committed, runFinal);
       let interim="";
       for(let i=0;i<ev.results.length;i++){ if(!ev.results[i].isFinal) interim+=ev.results[i][0].transcript; }
@@ -2382,7 +2417,11 @@ $("#ideas").addEventListener("keydown",(e)=>{
       // Committer le finalisé de CE run AVANT toute relance : le prochain run repart avec un
       // `ev.results` vide, `committed` doit donc déjà porter ce qu'on vient de dire — sinon on
       // le perdrait, ou (pire) on le rejouerait. C'est le pendant « inter-runs » de l'idempotence.
-      if(runFinal.trim()){ committed=micJoin(committed, runFinal); runFinal=""; }
+      if(runFinal.trim()){
+        committed=micJoin(committed, runFinal);
+        dictee=micJoin(dictee, runFinal); lastRun=runFinal; // références de micDedup()
+        runFinal="";
+      }
       // Chrome termine la reconnaissance de lui-même (blanc court, `no-speech`, plafond de
       // durée) MÊME en `continuous` — c'est la vraie raison des coupures en pleine réflexion.
       // Tant que l'arrêt n'a pas été demandé, on relance donc en silence : c'est ce qui fait
