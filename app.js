@@ -2384,28 +2384,33 @@ $("#ideas").addEventListener("keydown",(e)=>{
     if(!target) return;
     if(!(await ensureMic())) return;
     const interimEl=btn.dataset.micInterim?document.querySelector(btn.dataset.micInterim):null;
-    // Texte DÉJÀ acquis : le contenu du champ au démarrage, augmenté du finalisé des runs
-    // précédents (Chrome relance la reconnaissance de lui-même, cf. l'événement `end`).
-    let committed=target.value;
-    // Texte finalisé du run EN COURS. Recalculé À CHAQUE événement par micFinals() depuis TOUT
-    // `ev.results` (jamais accumulé depuis `resultIndex`) : c'était LA cause des mots répétés
-    // en cascade (« le / le micro / le micro de… », issue #59). Sur Android, un segment déjà
-    // finalisé est ré-émis dans les événements suivants ; l'ancien code, qui ajoutait à chaque
-    // fois, le rejouait. Recomposer tout le run rend l'écriture idempotente.
-    let runFinal="";
-    // Mémoire des runs précédents, pour micDedup() : `dictee` = tout ce que LA DICTÉE a acquis
-    // (hors texte déjà présent dans le champ), `lastRun` = le seul run précédent. Le moteur
-    // rejoue tantôt l'un, tantôt l'autre : on lui oppose les deux.
-    let dictee="", lastRun="";
+    // État de LA dictée (une activation du bouton), partagé par tous les runs successifs :
+    // `committed` = texte acquis (contenu du champ au démarrage + finalisé des runs terminés),
+    // `dictee`/`lastRun` = références opposées au moteur par micDedup(), `runFinal` = finalisé
+    // du run en cours, recomposé à chaque événement par micFinals().
+    const st={ committed:target.value, dictee:"", lastRun:"", runFinal:"" };
+    wantStop=false;
+    if(!startRun(btn,target,interimEl,st)){ btn.classList.remove("on"); clearSilence(); }
+  });
+  // UN run = UNE instance de reconnaissance, JAMAIS réutilisée. C'est la racine des mots répétés
+  // en cascade : `continuous` ne survit pas aux coupures du moteur, on relance donc (c'est le
+  // délai de silence) — mais relancer LA MÊME instance ne remet pas `ev.results` à zéro sur
+  // Android. Le nouveau run re-livrait alors tout le texte déjà dit, qu'on venait justement de
+  // committer, et chaque événement recollait la dictée derrière elle-même :
+  // « micro / micro micro pourra / micro micro pourra micro pourra s'il… ». micDedup() rattrape
+  // le rejeu quand il est identique au mot près, mais le moteur RÉVISE en cours de route
+  // (« du micro » → « de micro ») et la reprise passe alors au travers. Une instance neuve, elle,
+  // ne peut pas porter les résultats de la précédente : la relance repart vraiment vide.
+  function startRun(btn,target,interimEl,st){
     const r=new Ctor();
     // `continuous=true` : ne pas rendre la main au premier blanc — c'est nous qui décidons
     // quand la dictée s'arrête (timer de silence ci-dessus ou 2e appui sur le bouton).
     r.lang="fr-FR"; r.interimResults=true; r.continuous=true;
     r.addEventListener("result",(ev)=>{
-      // Recomposé (jamais accumulé), puis débarrassé de ce que le moteur rejoue du run
-      // précédent — les deux étages de l'anti-répétition, intra-run puis inter-runs.
-      runFinal=micDedup(micFinals(ev.results), dictee, lastRun);
-      target.value=micJoin(committed, runFinal);
+      // Recomposé (jamais accumulé), puis débarrassé de ce que le moteur rejouerait d'un run
+      // précédent — les deux étages textuels, par-dessus l'isolation des runs ci-dessus.
+      st.runFinal=micDedup(micFinals(ev.results), st.dictee, st.lastRun);
+      target.value=micJoin(st.committed, st.runFinal);
       let interim="";
       for(let i=0;i<ev.results.length;i++){ if(!ev.results[i].isFinal) interim+=ev.results[i][0].transcript; }
       if(interimEl){
@@ -2415,22 +2420,20 @@ $("#ideas").addEventListener("keydown",(e)=>{
       armSilence(); // on parle : le compte à rebours repart de zéro
     });
     r.addEventListener("end",()=>{
-      // Committer le finalisé de CE run AVANT toute relance : le prochain run repart avec un
-      // `ev.results` vide, `committed` doit donc déjà porter ce qu'on vient de dire — sinon on
-      // le perdrait, ou (pire) on le rejouerait. C'est le pendant « inter-runs » de l'idempotence.
-      if(runFinal.trim()){
-        committed=micJoin(committed, runFinal);
-        dictee=micJoin(dictee, runFinal); lastRun=runFinal; // références de micDedup()
-        runFinal="";
+      // Committer le finalisé de CE run avant toute relance : le run suivant repart d'une
+      // instance neuve, donc d'un `results` vide — sans ce commit, ce qui vient d'être dit
+      // serait perdu à la première pause.
+      if(st.runFinal.trim()){
+        st.committed=micJoin(st.committed, st.runFinal);
+        st.dictee=micJoin(st.dictee, st.runFinal); st.lastRun=st.runFinal;
+        st.runFinal="";
       }
       // Chrome termine la reconnaissance de lui-même (blanc court, `no-speech`, plafond de
       // durée) MÊME en `continuous` — c'est la vraie raison des coupures en pleine réflexion.
       // Tant que l'arrêt n'a pas été demandé, on relance donc en silence : c'est ce qui fait
       // tenir la dictée à travers les pauses. La borne reste le timer, qui pose `wantStop`
       // après SILENCE_MS sans un mot — pas de relance infinie.
-      if(!wantStop && activeBtn===btn){
-        try{ r.start(); return; }catch(err){} // relance impossible : on retombe sur la clôture
-      }
+      if(!wantStop && activeBtn===btn && startRun(btn,target,interimEl,st)) return;
       clearSilence();
       btn.classList.remove("on");
       if(activeBtn===btn){ activeBtn=null; rec=null; }
@@ -2448,10 +2451,9 @@ $("#ideas").addEventListener("keydown",(e)=>{
         toast("Dictée vocale indisponible pour le moment (elle passe par un service Google, parfois capricieux). Le micro du clavier reste une alternative.", 7000);
       }
     });
-    wantStop=false;
-    try{ r.start(); rec=r; activeBtn=btn; btn.classList.add("on"); armSilence(); }
-    catch(err){ btn.classList.remove("on"); clearSilence(); }
-  });
+    try{ r.start(); rec=r; activeBtn=btn; btn.classList.add("on"); armSilence(); return true; }
+    catch(err){ return false; }
+  }
 })();
 
 $("#token-save").addEventListener("click",async()=>{
@@ -2495,11 +2497,40 @@ async function refreshVeilleurStatus(){
     el.textContent=txt;
   }catch(e){ el.textContent="état inconnu ("+errMsg(e)+")"; }
 }
+// Quelle version tourne VRAIMENT sur cet appareil ? Sans ce témoin, impossible de distinguer
+// « le correctif ne marche pas » de « l'app sert encore l'ancienne version depuis son cache » —
+// ça a coûté deux allers-retours sur le micro (2026-07-25). Le nom du cache du service worker
+// (`fleetview-shell-vN`, bumpé à chaque correctif visible) est la seule marque de version
+// disponible sur un site statique sans étape de build.
+async function refreshAppVersion(){
+  const el=$("#app-version"); if(!el) return;
+  if(!window.caches){ el.textContent="pas de cache local (version toujours fraîche)"; return; }
+  try{
+    const keys=await caches.keys();
+    const shell=keys.filter(k=>k.startsWith("fleetview-shell-"));
+    el.textContent = shell.length ? "coquille servie : "+shell.join(", ") : "aucune coquille en cache";
+  }catch(e){ el.textContent="version inconnue"; }
+}
+// Vidage complet + désinscription du service worker, puis rechargement : la version en ligne
+// est reprise au premier chargement, sans passer par les réglages du navigateur (impraticables
+// sur téléphone). Le service worker se réinstalle tout seul au rechargement.
+async function forceUpdate(){
+  const btn=$("#btn-force-update"); if(btn) btn.disabled=true;
+  try{
+    if(window.caches){ const keys=await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k))); }
+    if(navigator.serviceWorker){
+      const regs=await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister().catch(()=>{})));
+    }
+  }catch(e){ /* on recharge quand même : au pire l'ancienne version revient */ }
+  location.reload();
+}
 $("#btn-settings").addEventListener("click",()=>{
   $("#ntfy-input").value=store.ntfy;
-  renderRate(); updateNotifStatus(); refreshVeilleurStatus(); refreshRegistryStatus();
+  renderRate(); updateNotifStatus(); refreshVeilleurStatus(); refreshRegistryStatus(); refreshAppVersion();
   modalSettings.showModal();
 });
+$("#btn-force-update").addEventListener("click",forceUpdate);
 $("#btn-refresh-registry").addEventListener("click",()=>refreshRegistry(false));
 $("#modal-settings-close").addEventListener("click",()=>modalSettings.close());
 $("#modal-cloud-close").addEventListener("click",()=>$("#modal-cloud").close());

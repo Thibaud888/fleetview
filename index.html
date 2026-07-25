@@ -305,6 +305,18 @@
       <p class="marginalia num" id="registry-refresh-status" style="margin:6px 0 0; font-size:12px">—</p>
     </div>
     <div class="field">
+      <label>⬇️ Version de l'app</label>
+      <div class="settings-row">
+        <button type="button" class="btn" id="btn-force-update">Forcer la mise à jour</button>
+      </div>
+      <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">
+        L'app est installée sur l'appareil : elle peut continuer de servir une version en cache
+        après une correction publiée. Ce bouton vide ce cache et recharge la dernière version en
+        ligne — à utiliser quand un correctif annoncé ne se voit pas.
+      </p>
+      <p class="marginalia num" id="app-version" style="margin:6px 0 0; font-size:12px">—</p>
+    </div>
+    <div class="field">
       <label>Compte GitHub</label>
       <button type="button" class="btn" id="btn-change-token">Changer le token…</button>
       <p class="marginalia" style="margin:6px 0 0; font-size:12.5px">Le token reste dans ce navigateur (localStorage) et ne transite que vers api.github.com.</p>
