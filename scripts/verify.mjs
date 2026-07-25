@@ -100,6 +100,62 @@ async function checkCloudPrompt() {
   return null;
 }
 
+// Dictée vocale : non-régression de la RÉPÉTITION DES MOTS. `ev.results` est cumulatif et le
+// moteur (Android surtout) renvoie souvent `resultIndex=0` en relivrant des segments déjà
+// finalisés : toute écriture « en ajoutant » recolle les mots précédents. Même technique que
+// ci-dessus — on découpe l'IIFE `initMic` de app.js et on la fait tourner sur des stubs DOM avec
+// une SpeechRecognition factice qui rejoue ce comportement.
+async function checkMic() {
+  const src = await readFile(join(ROOT, "app.js"), "utf8");
+  const start = src.indexOf("(function initMic(){");
+  const close = src.indexOf("\n})();", start);
+  if (start === -1 || close === -1) return "IIFE initMic introuvable dans app.js";
+  const iife = src.slice(start, close + "\n})();".length);
+
+  const target = { value: "" };
+  const btn = { dataset: { mic: "#champ" }, classList: { add() {}, remove() {} } };
+  btn.closest = () => btn;
+  let onClick = null;
+  const doc = {
+    documentElement: { classList: { add() {} } },
+    addEventListener: (t, fn) => { if (t === "click") onClick = fn; },
+    querySelector: (sel) => (sel === "#champ" ? target : null),
+  };
+  let rec = null;
+  class FakeRec {
+    constructor() { this.h = {}; this.started = 0; rec = this; }
+    addEventListener(t, fn) { (this.h[t] ||= []).push(fn); }
+    fire(t, ev) { (this.h[t] || []).forEach((fn) => fn(ev)); }
+    start() { this.started++; }
+    stop() { this.fire("end", {}); }
+  }
+  try {
+    new Function("window", "document", "navigator", "toast", iife)(
+      { SpeechRecognition: FakeRec }, doc, {}, () => {});
+  } catch (e) { return `initMic ne s'évalue pas : ${e.message}`; }
+  if (!onClick) return "initMic n'écoute pas les clics";
+  await onClick({ target: btn });
+  if (!rec) return "le clic sur [data-mic] ne démarre aucune reconnaissance";
+
+  const seg = (t, isFinal) => ({ isFinal, 0: { transcript: t } });
+  const say = (...list) => rec.fire("result", { resultIndex: 0, results: list });
+
+  say(seg("bonjour", true));
+  say(seg("bonjour", true), seg("je teste", false));                 // relivraison + interim
+  say(seg("bonjour", true), seg("je teste la dictée", true));
+  say(seg("bonjour", true), seg("je teste la dictée", true));        // révision à l'identique
+  if (target.value !== "bonjour je teste la dictée")
+    return `mots répétés : ${JSON.stringify(target.value)} (attendu "bonjour je teste la dictée")`;
+
+  const avant = rec.started;
+  rec.fire("end", {});                                              // coupure Chrome → relance
+  if (rec.started !== avant + 1) return "la dictée ne se relance pas après une coupure du moteur";
+  say(seg("et la suite", true));                                    // nouveau tableau, repart de 0
+  if (target.value !== "bonjour je teste la dictée et la suite")
+    return `après relance : ${JSON.stringify(target.value)} (texte perdu ou dupliqué)`;
+  return null;
+}
+
 server.listen(PORT, async () => {
   try {
     const res = await fetch(`http://localhost:${PORT}/`);
@@ -108,8 +164,10 @@ server.listen(PORT, async () => {
     if (!html.toLowerCase().includes("<html")) return fail("la réponse ne ressemble pas à du HTML");
     const bad = await checkCloudPrompt();
     if (bad) return fail(`prompt de session cloud — ${bad}`);
+    const badMic = await checkMic();
+    if (badMic) return fail(`dictée vocale — ${badMic}`);
     server.close();
-    console.log("VERIFY OK : le site démarre et répond, contrat du prompt cloud respecté.");
+    console.log("VERIFY OK : le site démarre et répond, prompt cloud et dictée conformes.");
     process.exit(0);
   } catch (e) {
     fail(`pas de réponse : ${e.message}`);

@@ -2109,20 +2109,30 @@ $("#ideas").addEventListener("keydown",(e)=>{
     if(!target) return;
     if(!(await ensureMic())) return;
     const interimEl=btn.dataset.micInterim?document.querySelector(btn.dataset.micInterim):null;
-    let base=target.value;
+    // `base` = ce qui est acquis (saisi à la main, ou dicté avant une relance) ; le texte de la
+    // session de reconnaissance en cours est recomposé à chaque événement, jamais ajouté bout à
+    // bout (voir le handler `result`).
+    let base=target.value, sessionText="";
+    const glue=(a,b)=> a&&b ? a+" "+b : (a||b);
     const r=new Ctor();
     // `continuous=true` : ne pas rendre la main au premier blanc — c'est nous qui décidons
     // quand la dictée s'arrête (timer de silence ci-dessus ou 2e appui sur le bouton).
     r.lang="fr-FR"; r.interimResults=true; r.continuous=true;
     r.addEventListener("result",(ev)=>{
-      let interim="";
-      for(let i=ev.resultIndex;i<ev.results.length;i++){
+      // `ev.results` est CUMULATIF sur toute la session. Parcourir depuis `ev.resultIndex` en
+      // AJOUTANT au champ suppose que le navigateur ne renvoie jamais deux fois le même segment —
+      // faux : Chrome (Android surtout) repart souvent de `resultIndex=0`, et révise des segments
+      // déjà finalisés. Chaque événement re-collait donc les mots déjà écrits : la répétition.
+      // On recompose le texte complet de la session à chaque fois — opération idempotente, une
+      // relivraison ne fait que réécrire la même valeur.
+      let final="", interim="";
+      for(let i=0;i<ev.results.length;i++){
         const res=ev.results[i];
-        if(res.isFinal){
-          const t=res[0].transcript.trim();
-          if(t){ base = base ? (base+" "+t) : t; target.value=base; }
-        } else interim+=res[0].transcript;
+        if(res.isFinal) final=glue(final,res[0].transcript.trim());
+        else interim+=res[0].transcript;
       }
+      sessionText=final;
+      target.value=glue(base,sessionText);
       if(interimEl){
         if(interim){ interimEl.textContent=interim; interimEl.hidden=false; }
         else { interimEl.hidden=true; interimEl.textContent=""; }
@@ -2136,7 +2146,13 @@ $("#ideas").addEventListener("keydown",(e)=>{
       // tenir la dictée à travers les pauses. La borne reste le timer, qui pose `wantStop`
       // après SILENCE_MS sans un mot — pas de relance infinie.
       if(!wantStop && activeBtn===btn){
-        try{ r.start(); return; }catch(err){} // relance impossible : on retombe sur la clôture
+        try{
+          r.start();
+          // La relance repart d'un `results` vide : ce qui vient d'être reconnu passe dans
+          // `base`, sinon le premier résultat de la nouvelle session l'effacerait.
+          base=glue(base,sessionText); sessionText="";
+          return;
+        }catch(err){} // relance impossible : on retombe sur la clôture
       }
       clearSilence();
       btn.classList.remove("on");
