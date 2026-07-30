@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { estPrDeSession, seuilFranchiDans, synthetiseChecks } from "./rade.mjs";
 
-const PORT = Number(process.env.VERIFY_PORT ?? 4000);
+const PORT = Number(process.env.VERIFY_PORT ?? 4010);
 const ROOT = process.cwd();
 const TYPES = {
   ".html": "text/html; charset=utf-8",
