@@ -29,7 +29,7 @@ viennent de là : un carnet d'atelier où l'on note, suit et lance le travail.
 
 ### En local
 ```bash
-npx serve -l 4000 .      # puis http://localhost:4000
+npx serve -l 4010 .      # puis http://localhost:4010
 ```
 Aucune installation, aucun build : c'est un site statique.
 

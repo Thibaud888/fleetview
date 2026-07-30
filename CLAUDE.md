@@ -32,7 +32,7 @@
 
 ## Stack & commandes
 - Stack : HTML/CSS/JS vanilla, **zéro dépendance**, API GitHub appelée côté client.
-- Dev : `npx serve -l 4000 .`
+- Dev : `npx serve -l 4010 .`
 - Test : `node scripts/verify.mjs`
 - Build : aucun (site statique servi tel quel).
 - Déploiement : GitHub Pages (workflow `pages.yml` du kit, déploie `main`).

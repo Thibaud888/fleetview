@@ -58,7 +58,7 @@ scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après
 ## Commandes
 
 ```bash
-npx serve -l 4000 .              # Dev : http://localhost:4000
+npx serve -l 4010 .              # Dev : http://localhost:4010
 node scripts/verify.mjs          # Test : serveur HTTP natif, vérifie réponse
 # Pas de build (site statique)
 # Déploiement : GitHub Pages auto (pages.yml sur main)
