@@ -1,0 +1,49 @@
+{
+  "name": "alerte-seuils",
+  "version": "0.1.0",
+  "description": "Prévient avant de dépasser un seuil : contexte presque plein, limite 5 h / 7 j, budget de session, ou contexte plein dans N tours.",
+  "userConfig": {
+    "contexte_alerte": {
+      "type": "number",
+      "title": "Contexte : alerte (%)",
+      "description": "Prévient quand le contexte dépasse ce pourcentage.",
+      "default": 70,
+      "min": 10,
+      "max": 99
+    },
+    "contexte_critique": {
+      "type": "number",
+      "title": "Contexte : critique (%)",
+      "description": "Second avertissement, plus appuyé.",
+      "default": 90,
+      "min": 10,
+      "max": 99
+    },
+    "limite_alerte": {
+      "type": "number",
+      "title": "Limite 5 h / 7 j : alerte (%)",
+      "description": "Prévient quand une fenêtre de limite dépasse ce pourcentage.",
+      "default": 80,
+      "min": 10,
+      "max": 99
+    },
+    "budget_session": {
+      "type": "number",
+      "title": "Budget de session ($)",
+      "description": "Prévient à 80 % puis 100 % de ce montant. 0 = désactivé.",
+      "default": 0,
+      "min": 0
+    },
+    "tours_avant_plein": {
+      "type": "number",
+      "title": "Prévision : tours restants",
+      "description": "Prévient quand, au rythme actuel, le contexte sera plein dans ce nombre de tours ou moins. 0 = désactivé.",
+      "default": 5,
+      "min": 0,
+      "max": 50
+    }
+  },
+  "author": {
+    "name": "Thibaud888"
+  }
+}

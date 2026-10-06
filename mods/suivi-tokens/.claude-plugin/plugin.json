@@ -1,0 +1,9 @@
+{
+  "name": "suivi-tokens",
+  "version": "0.1.0",
+  "description": "Commande /tokens : historique des tokens par tour, par jour et par repo (conservé d'une session à l'autre).",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Thibaud888"
+  }
+}

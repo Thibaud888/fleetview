@@ -1,0 +1,9 @@
+{
+  "name": "fleetview-mods",
+  "owner": { "name": "Thibaud888" },
+  "plugins": [
+    { "name": "jauge-tokens", "source": "./mods/jauge-tokens", "description": "Jauge discrète au-dessus du prompt : contexte, limites, coût." },
+    { "name": "suivi-tokens", "source": "./mods/suivi-tokens", "description": "Commande /tokens : historique par tour, jour et repo." },
+    { "name": "alerte-seuils", "source": "./mods/alerte-seuils", "description": "Alertes avant de dépasser un seuil (contexte, limites, budget, prévision)." }
+  ]
+}
