@@ -1,0 +1,9 @@
+{
+  "name": "jauge-tokens",
+  "version": "0.1.0",
+  "description": "Jauge discrète au-dessus du prompt : contexte, limites de débit et coût de la session.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Thibaud888"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "suivi-tokens",
+  "version": "0.1.0",
+  "description": "Commande /tokens : tendance, jours, repos et session (panneau interactif), historique repris depuis les transcripts.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Thibaud888"
+  }
+}

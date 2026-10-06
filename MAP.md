@@ -19,6 +19,7 @@ icon-*.png, maskable-*.png, apple-touch-icon.png    Icônes générées (ne pas 
 README.md               Page d'accueil : pitch rapide, installation express
 docs/GUIDE.md           Guide complet : concepts, usage, sécurité, archi, lanceur cloud + issue directe
 scripts/verify.mjs      Vérification : serveur HTTP natif (pas npx serve) + contrats de fonctions pures (prompt cloud, parseBacklog, micFinals/micJoin, summarizeTitle, rade) découpées de app.js via sliceFn()
+mods/                   Mods Claude Code (suivi des tokens : jauge, /tokens, alertes) ; marketplace dans .claude-plugin/marketplace.json — voir mods/README.md
 scripts/icons.mjs       Génère icônes PNG à partir de icon.svg (lance après modif : node scripts/icons.mjs)
 .github/workflows/      Stubs kit : claude.yml (dispatch), map.yml, pages.yml (déploiement)
 ```
