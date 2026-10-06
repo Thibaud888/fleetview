@@ -20,10 +20,21 @@ export type Turn = {
 /** jour (AAAA-MM-JJ) → repo → cumul */
 export type Daily = Record<string, Record<string, Totals>>
 
-export type Tab = 'session' | 'jours' | 'repos'
+export type Tab = 'apercu' | 'jours' | 'repos' | 'session'
+export type Metric = 'tokens' | 'cache' | 'usd'
 
 declare module 'claude-code' {
   interface PluginState {
-    'suivi-tokens': { turns: Turn[]; daily: Daily; tab: Tab; isCostly: boolean }
+    'suivi-tokens': {
+      turns: Turn[]
+      live: Daily
+      hist: Daily
+      tab: Tab
+      period: number
+      metric: Metric
+      repoFilter: string | null
+      isCostly: boolean
+      importNote: string
+    }
   }
 }
